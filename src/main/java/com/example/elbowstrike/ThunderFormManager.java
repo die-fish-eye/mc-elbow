@@ -25,10 +25,32 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * 雷霆形态（司空震大招）状态机。
+ *
+ * 流程：
+ *   1. 按 K 激活：玩家进入"漂浮"阶段，缓慢匀速上升（水平方向可自由移动）。
+ *   2. 漂浮持续 thunderFormFloatDuration tick，期间每 X tick 在 20 格内召唤一道雷电。
+ *      优先落在生物身上，否则随机位置。
+ *   3. 漂浮结束后进入"坠落"阶段：锁定向下的速度，快速下坠，继续劈雷。
+ *   4. 玩家落地 → 触发雷暴：对 10 格内所有生物造成伤害 + 击退 + 粒子。
+ *
+ * 说明：
+ *   - 漂浮阶段每 tick 把垂直速度锁定为 +floatSpeed，玩家不会因重力下落。
+ *   - 坠落阶段每 tick 把垂直速度锁定为 -fallSpeed，玩家快速砸向地面。
+ *   - 默认全程清零 fallDistance，避免摔伤；彩蛋配置可放开。
+ *   - 超时保护，防止玩家卡在空中（比如鞘翅、创造飞行）。
+ *
+ * 注意：本类通过 @Mod.EventBusSubscriber 自动注册，切勿在 ElbowStrikeMod 里重复注册。
+ */
 @Mod.EventBusSubscriber(modid = ElbowStrikeMod.MODID)
 public final class ThunderFormManager {
 
+    private enum Phase { FLOATING, FALLING }
+
     private static final class State {
+        Phase phase;
+        int floatTicksLeft;
         int lightningTimer;
         int timeout;
         boolean hasLeftGround;
@@ -53,17 +75,14 @@ public final class ThunderFormManager {
         // 已经在形态中
         if (STATES.containsKey(uuid)) return;
 
-        // 给向上的初速度（叠加在原有水平速度上，覆盖垂直速度）
-        double up = cfg.thunderFormUpSpeed.get();
-        Vec3 v = player.getDeltaMovement();
-        player.setDeltaMovement(v.x, up, v.z);
-        player.hasImpulse = true;
-        player.hurtMarked = true;
-        player.fallDistance = 0.0F;
+        int duration = cfg.thunderFormFloatDuration.get();
+        if (duration <= 0) return;
 
         State s = new State();
-        s.lightningTimer = 0;   // 第一 tick 立刻劈雷
-        s.timeout = 240;        // 12 秒兜底
+        s.phase = Phase.FLOATING;
+        s.floatTicksLeft = duration;
+        s.lightningTimer = 0;      // 第一 tick 立刻劈雷
+        s.timeout = duration + 400; // 漂浮时长 + 20 秒兜底
         s.hasLeftGround = false;
         STATES.put(uuid, s);
         COOLDOWNS.put(uuid, now + cfg.thunderFormCooldown.get());
@@ -134,18 +153,23 @@ public final class ThunderFormManager {
             p.fallDistance = 0.0F;
         }
 
+        // 记录是否离过地
         boolean onGround = p.onGround() || p.isInWater() || p.isInLava();
-
-        // 落地判定：只有离过地才算真正落地
         if (!onGround) {
             s.hasLeftGround = true;
-        } else if (s.hasLeftGround) {
+        } else if (s.hasLeftGround && s.phase == Phase.FALLING) {
+            // 只有在坠落阶段才允许落地触发雷暴
             detonateThunderstorm(p);
             it.remove();
             return;
         }
 
-        // ---- 从按 K 那一刻起就劈雷，不管有没有离地 ----
+        switch (s.phase) {
+            case FLOATING -> tickFloating(p, s);
+            case FALLING  -> tickFalling(p, s);
+        }
+
+        // ---- 从按 K 那一刻起就劈雷，不管哪个阶段 ----
         if (s.lightningTimer <= 0) {
             spawnLightning(p);
             s.lightningTimer = cfg.thunderFormLightningInterval.get();
@@ -161,6 +185,53 @@ public final class ThunderFormManager {
                     3, 0.3D, 0.5D, 0.3D, 0.05D
             );
         }
+    }
+
+    // ================================================================
+    // 漂浮阶段：缓慢匀速上升，水平移动保留
+    // ================================================================
+    private static void tickFloating(ServerPlayer p, State s) {
+        var cfg = ElbowStrikeConfig.COMMON;
+        double speed = cfg.thunderFormFloatSpeed.get();
+
+        Vec3 v = p.getDeltaMovement();
+        p.setDeltaMovement(v.x, speed, v.z);
+        p.hasImpulse = true;
+        p.hurtMarked = true;
+
+        s.floatTicksLeft--;
+        if (s.floatTicksLeft <= 0) {
+            // 进入坠落阶段
+            s.phase = Phase.FALLING;
+            s.timeout = 400;   // 20 秒坠落兜底
+
+            double fall = cfg.thunderFormFallSpeed.get();
+            Vec3 v2 = p.getDeltaMovement();
+            p.setDeltaMovement(v2.x, -fall, v2.z);
+            p.hurtMarked = true;
+
+            // 下坠音效
+            p.level().playSound(
+                    null,
+                    p.getX(), p.getY(), p.getZ(),
+                    SoundEvents.TRIDENT_RIPTIDE_3,
+                    SoundSource.PLAYERS,
+                    1.2F, 0.9F
+            );
+        }
+    }
+
+    // ================================================================
+    // 坠落阶段：锁定向下速度，快速砸向地面
+    // ================================================================
+    private static void tickFalling(ServerPlayer p, State s) {
+        var cfg = ElbowStrikeConfig.COMMON;
+        double fall = cfg.thunderFormFallSpeed.get();
+
+        Vec3 v = p.getDeltaMovement();
+        p.setDeltaMovement(v.x, -fall, v.z);
+        p.hasImpulse = true;
+        p.hurtMarked = true;
     }
 
     // ================================================================
@@ -196,7 +267,7 @@ public final class ThunderFormManager {
             tz = player.getZ() + Math.sin(a) * r;
         }
 
-        // 视觉闪电（不引发火焰、不转化苦力怕、不刷骷髅马）
+        // 视觉闪电
         LightningBolt bolt = EntityType.LIGHTNING_BOLT.create(level);
         if (bolt != null) {
             bolt.moveTo(tx, ty, tz);
@@ -296,7 +367,7 @@ public final class ThunderFormManager {
     }
 
     // ================================================================
-    // 取消坠落伤害（若配置允许坠落伤害则不取消）
+    // 取消坠落伤害（若配置允许则不取消）
     // ================================================================
     @SubscribeEvent
     public static void onFall(LivingFallEvent event) {
@@ -308,7 +379,9 @@ public final class ThunderFormManager {
         }
     }
 
-   
+    // ================================================================
+    // 玩家登出时清理
+    // ================================================================
     @SubscribeEvent
     public static void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.getEntity() instanceof ServerPlayer sp) {

@@ -60,7 +60,9 @@ public final class ElbowStrikeConfig {
         // ---- 雷霆形态 ----
         public final ForgeConfigSpec.BooleanValue enableThunderForm;
         public final ForgeConfigSpec.IntValue thunderFormCooldown;
-        public final ForgeConfigSpec.DoubleValue thunderFormUpSpeed;
+        public final ForgeConfigSpec.DoubleValue thunderFormFloatSpeed;
+        public final ForgeConfigSpec.IntValue thunderFormFloatDuration;
+        public final ForgeConfigSpec.DoubleValue thunderFormFallSpeed;
         public final ForgeConfigSpec.DoubleValue thunderFormLightningRadius;
         public final ForgeConfigSpec.IntValue thunderFormLightningInterval;
         public final ForgeConfigSpec.DoubleValue thunderFormLightningDamage;
@@ -242,8 +244,8 @@ public final class ElbowStrikeConfig {
             // ============================================================
             b.comment(
                     "【雷霆形态设置】",
-                    "按 K 激活：给玩家一个向上的初速度（伪悬停），",
-                    "从激活瞬间开始就在周围不断召唤雷电，",
+                    "按 K 激活：玩家进入缓慢漂浮上升，持续一段时间后迅速坠落。",
+                    "漂浮和坠落全程持续在周围召唤雷电。",
                     "落地时产生雷暴，对范围内生物造成伤害与击退。"
             ).push("thunder_form");
 
@@ -259,16 +261,36 @@ public final class ElbowStrikeConfig {
                     )
                     .defineInRange("thunderFormCooldown", 600, 0, 24000);
 
-            thunderFormUpSpeed = b
+            thunderFormFloatSpeed = b
                     .comment(
-                            "向上初速度（单位：格/tick）",
-                            "含义：激活瞬间给玩家向上的初速度，之后由重力自然减速到顶点，再自然下落。",
-                            "参考：1.0 ≈ 跳 4 格；1.5 ≈ 跳 8~10 格（默认）；2.0 ≈ 跳 15 格；3.0 ≈ 跳 30 格。",
-                            "注意：太大会导致隧道穿过方块。",
-                            "取值范围：0.3 ~ 5.0",
-                            "默认值：1.5"
+                            "漂浮上升速度（单位：格/tick，正值向上）",
+                            "含义：漂浮阶段每 tick 锁定的垂直速度。",
+                            "参考：0.05 = 极慢；0.15 = 缓慢上升（默认）；0.3 = 较快上升。",
+                            "注意：太大会让漂浮手感接近弹射。",
+                            "取值范围：0.02 ~ 1.0",
+                            "默认值：0.15"
                     )
-                    .defineInRange("thunderFormUpSpeed", 1.5D, 0.3D, 5.0D);
+                    .defineInRange("thunderFormFloatSpeed", 0.15D, 0.02D, 1.0D);
+
+            thunderFormFloatDuration = b
+                    .comment(
+                            "漂浮持续时间（单位：tick，20 tick = 1 秒）",
+                            "参考：100 = 5 秒（默认）；60 = 3 秒；200 = 10 秒。",
+                            "总上升高度 ≈ 漂浮速度 × 持续时间。",
+                            "取值范围：10 ~ 2400",
+                            "默认值：100"
+                    )
+                    .defineInRange("thunderFormFloatDuration", 100, 10, 2400);
+
+            thunderFormFallSpeed = b
+                    .comment(
+                            "坠落速度（单位：格/tick，正值表示向下速度大小）",
+                            "含义：漂浮结束后锁定的垂直速度大小。",
+                            "参考：1.0 = 稍快；2.0 = 迅速（默认）；3.0 = 极快（可能穿薄方块）。",
+                            "取值范围：0.5 ~ 5.0",
+                            "默认值：2.0"
+                    )
+                    .defineInRange("thunderFormFallSpeed", 2.0D, 0.5D, 5.0D);
 
             thunderFormLightningRadius = b
                     .comment(
@@ -284,9 +306,9 @@ public final class ElbowStrikeConfig {
                             "雷电生成间隔（单位：tick）",
                             "参考：5 = 0.25 秒（默认）；10 = 0.5 秒；3 = 极密集。",
                             "取值范围：1 ~ 100",
-                            "默认值：5"
+                            "默认值：1"
                     )
-                    .defineInRange("thunderFormLightningInterval", 5, 1, 100);
+                    .defineInRange("thunderFormLightningInterval", 1, 1, 100);
 
             thunderFormLightningDamage = b
                     .comment(
@@ -324,7 +346,7 @@ public final class ElbowStrikeConfig {
             // 彩蛋：允许摔落伤害
             thunderFormAllowFallDamage = b
                     .comment(
-                            "牢大！！！",
+                            "不！牢大！！！",
                             "false = 屏蔽摔落伤害（默认，安全落地）",
                             "true  = 不再屏蔽，从高处落下会受到坠落伤害",
                             "默认值：false"
