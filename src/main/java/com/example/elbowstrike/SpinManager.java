@@ -16,15 +16,7 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * 管理「被肘飞后在空中旋转」的逻辑（仅普通生物）。
- *
- * 关键：用 ServerTickEvent END 而不是 LivingTickEvent。
- * 因为 Mob.tick() 在 super.tick()（LivingTickEvent 触发点）之后
- * 还会调用 serverAiStep() -> LookControl.tick() 重设 yHeadRot，
- * 会覆盖我们在 LivingTickEvent 里做的旋转。
- *
- * ServerTickEvent END 在所有实体 tick 完毕后触发，
- * 此时 AI 已执行完，我们改完的旋转不会再被覆盖。
+ * 管理「被肘飞后在空中旋转」的逻辑（仅普通生物）
  */
 @Mod.EventBusSubscriber(modid = ElbowStrikeMod.MODID)
 public final class SpinManager {
