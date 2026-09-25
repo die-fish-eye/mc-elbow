@@ -20,7 +20,15 @@ public final class KeyBindings {
             "key.elbowstrike.strike",
             KeyConflictContext.IN_GAME,
             InputConstants.Type.KEYSYM,
-            GLFW.GLFW_KEY_M,          // 默认按键 M
+            GLFW.GLFW_KEY_M,
+            CATEGORY
+    );
+
+    public static final KeyMapping THUNDER_FORM = new KeyMapping(
+            "key.elbowstrike.thunder_form",
+            KeyConflictContext.IN_GAME,
+            InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_K,
             CATEGORY
     );
 
@@ -29,5 +37,6 @@ public final class KeyBindings {
     @SubscribeEvent
     public static void onRegisterKeys(RegisterKeyMappingsEvent event) {
         event.register(ELBOW_STRIKE);
+        event.register(THUNDER_FORM);
     }
 }

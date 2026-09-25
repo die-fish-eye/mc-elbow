@@ -35,5 +35,12 @@ public final class NetworkHandler {
                 .decoder(SpinStartPacket::new)
                 .consumerMainThread(SpinStartPacket::handle)
                 .add();
+
+        // C2S：请求激活雷霆形态
+        CHANNEL.messageBuilder(ActivateThunderPacket.class, id++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(ActivateThunderPacket::encode)
+                .decoder(ActivateThunderPacket::new)
+                .consumerMainThread(ActivateThunderPacket::handle)
+                .add();
     }
 }

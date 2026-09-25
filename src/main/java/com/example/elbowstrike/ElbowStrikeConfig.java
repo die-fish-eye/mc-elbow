@@ -57,6 +57,18 @@ public final class ElbowStrikeConfig {
         public final ForgeConfigSpec.BooleanValue parryCounterSpin;
         public final ForgeConfigSpec.DoubleValue parryCounterKnockbackMult;
 
+        // ---- 雷霆形态 ----
+        public final ForgeConfigSpec.BooleanValue enableThunderForm;
+        public final ForgeConfigSpec.IntValue thunderFormCooldown;
+        public final ForgeConfigSpec.DoubleValue thunderFormUpSpeed;
+        public final ForgeConfigSpec.DoubleValue thunderFormLightningRadius;
+        public final ForgeConfigSpec.IntValue thunderFormLightningInterval;
+        public final ForgeConfigSpec.DoubleValue thunderFormLightningDamage;
+        public final ForgeConfigSpec.DoubleValue thunderFormImpactRadius;
+        public final ForgeConfigSpec.DoubleValue thunderFormImpactDamage;
+        public final ForgeConfigSpec.DoubleValue thunderFormImpactKnockback;
+        public final ForgeConfigSpec.BooleanValue thunderFormAllowFallDamage;
+
         Common(ForgeConfigSpec.Builder b) {
             b.comment(
                     "Elbow Strike - 肘击模组配置文件",
@@ -74,8 +86,6 @@ public final class ElbowStrikeConfig {
             range = b
                     .comment(
                             "肘击判定距离（单位：格）",
-                            "含义：从玩家眼睛位置到目标中心的距离上限。",
-                            "数值越大，能打到的生物越远。",
                             "取值范围：1.0 ~ 10.0",
                             "默认值：3.0"
                     )
@@ -83,11 +93,8 @@ public final class ElbowStrikeConfig {
 
             cone = b
                     .comment(
-                            "前方锥形判定阈值（单位：无量纲）",
-                            "含义：玩家视线方向与目标方向的夹角余弦值。",
-                            "数值越接近 1.0，判定范围越窄（必须正对着）。",
-                            "数值越接近 0.0，判定范围越宽（侧面也能打到）。",
-                            "参考：0.5 ≈ 前方 60° 锥形；0.7 ≈ 前方 45°；0.3 ≈ 前方 72°。",
+                            "前方锥形判定阈值（无量纲，视线与目标方向夹角的余弦值）",
+                            "0.5 ≈ 前方 60°；0.7 ≈ 前方 45°；0.3 ≈ 前方 72°",
                             "取值范围：0.0 ~ 1.0",
                             "默认值：0.5"
                     )
@@ -96,20 +103,17 @@ public final class ElbowStrikeConfig {
             damage = b
                     .comment(
                             "基础伤害（单位：点，即半颗心）",
-                            "含义：每次肘击对目标造成的伤害。",
-                            "参考：1.0 = 半颗心，2.0 = 1 颗心，20.0 = 10 颗心。",
+                            "参考：2.0 = 1 颗心；20.0 = 10 颗心。",
                             "取值范围：0.0 ~ 1000.0",
-                            "默认值：3.0（1.5 颗心）"
+                            "默认值：3.0"
                     )
                     .defineInRange("damage", 3.0D, 0.0D, 1000.0D);
 
             cooldownTicks = b
                     .comment(
                             "冷却时间（单位：tick，20 tick = 1 秒）",
-                            "含义：两次肘击之间的最小间隔。",
-                            "参考：5 tick = 0.25 秒；10 tick = 0.5 秒；20 tick = 1 秒。",
                             "取值范围：0 ~ 200",
-                            "默认值：5（约 0.25 秒）"
+                            "默认值：5"
                     )
                     .defineInRange("cooldownTicks", 5, 0, 200);
 
@@ -120,15 +124,12 @@ public final class ElbowStrikeConfig {
             // ============================================================
             b.comment(
                     "【击退设置】",
-                    "控制被肘击目标的击飞力度。",
-                    "击退会直接覆写目标的速度，无视击退抗性。"
+                    "控制被肘击目标的击飞力度，会直接覆写速度，无视击退抗性。"
             ).push("knockback");
 
             knockbackHorizontal = b
                     .comment(
                             "水平击退力度（单位：格/tick）",
-                            "含义：目标沿水平方向被推开的初始速度。",
-                            "参考：1.0 = 轻微后退；1.8 = 明显击退；3.0 = 大力击飞。",
                             "取值范围：0.0 ~ 20.0",
                             "默认值：1.8"
                     )
@@ -137,9 +138,6 @@ public final class ElbowStrikeConfig {
             knockbackVertical = b
                     .comment(
                             "垂直击退力度（单位：格/tick）",
-                            "含义：目标被向上抛起的初始速度，用于让它离地。",
-                            "注意：太小可能无法离地，无法触发空中旋转。",
-                            "参考：0.25 = 微微抬升；0.45 = 明显离地；0.8 = 抛得很高。",
                             "取值范围：0.0 ~ 10.0",
                             "默认值：0.6"
                     )
@@ -152,26 +150,20 @@ public final class ElbowStrikeConfig {
             // ============================================================
             b.comment(
                     "【空中旋转设置】",
-                    "目标被击飞后，如果离地，就会持续旋转。",
-                    "落地后自动停止旋转。"
+                    "目标被击飞后，如果离地，就会持续旋转，落地后停止。"
             ).push("spin");
 
             spinDuration = b
                     .comment(
-                            "旋转持续时间（单位：tick，20 tick = 1 秒）",
-                            "含义：目标从被肘击到停止旋转的最长持续时间。",
-                            "注意：如果目标提前落地，会立即停止旋转。",
-                            "参考：20 = 1 秒；60 = 3 秒；100 = 5 秒。",
+                            "旋转持续时间（单位：tick）",
                             "取值范围：0 ~ 600",
-                            "默认值：60（3 秒）"
+                            "默认值：60"
                     )
                     .defineInRange("spinDuration", 60, 0, 600);
 
             spinSpeed = b
                     .comment(
                             "旋转速度（单位：度/tick）",
-                            "含义：每 tick 目标旋转的角度。",
-                            "参考：16 = 慢速；32 = 中速；64 = 快速；180 = 每 tick 半圈。",
                             "取值范围：0.0 ~ 360.0",
                             "默认值：50.0"
                     )
@@ -184,57 +176,30 @@ public final class ElbowStrikeConfig {
             // ============================================================
             b.comment(
                     "【暴击设置】",
-                    "暴击触发条件（满足任意一条即算暴击）：",
+                    "暴击触发条件（任意一条即算）：",
                     "  1. 下落攻击：玩家在空中下落时肘击。",
                     "  2. 空中追击：被肘击的目标此时已经离地。",
                     "暴击时会增加伤害与击退，并播放暴击粒子与高音调音效。"
             ).push("crit");
 
             enableCrit = b
-                    .comment(
-                            "是否启用暴击判定",
-                            "true  = 启用暴击（按下方倍率加强）",
-                            "false = 禁用暴击（所有肘击一律使用基础数值）",
-                            "默认值：true"
-                    )
+                    .comment("是否启用暴击判定，默认值：true")
                     .define("enableCrit", true);
 
             critDamageMult = b
-                    .comment(
-                            "暴击伤害倍率（乘算）",
-                            "含义：暴击时最终伤害 = 基础伤害 × 此倍率。",
-                            "参考：1.5 = 提升 50%；2.0 = 翻倍；3.0 = 三倍。",
-                            "取值范围：1.0 ~ 10.0",
-                            "默认值：1.5"
-                    )
+                    .comment("暴击伤害倍率（乘算），取值范围：1.0 ~ 10.0，默认值：1.5")
                     .defineInRange("critDamageMult", 1.5D, 1.0D, 10.0D);
 
             critKnockbackHorizontalMult = b
-                    .comment(
-                            "暴击水平击退倍率（乘算）",
-                            "含义：暴击时水平击退 = 基础水平击退 × 此倍率。",
-                            "取值范围：1.0 ~ 10.0",
-                            "默认值：1.3"
-                    )
+                    .comment("暴击水平击退倍率（乘算），取值范围：1.0 ~ 10.0，默认值：1.3")
                     .defineInRange("critKnockbackHorizontalMult", 1.3D, 1.0D, 10.0D);
 
             critKnockbackVerticalMult = b
-                    .comment(
-                            "暴击垂直击退倍率（乘算）",
-                            "含义：暴击时垂直击退 = 基础垂直击退 × 此倍率。",
-                            "取值范围：1.0 ~ 10.0",
-                            "默认值：1.4"
-                    )
+                    .comment("暴击垂直击退倍率（乘算），取值范围：1.0 ~ 10.0，默认值：1.4")
                     .defineInRange("critKnockbackVerticalMult", 1.4D, 1.0D, 10.0D);
 
             critPitch = b
-                    .comment(
-                            "暴击音效音调",
-                            "含义：暴击时音效播放的 pitch 值。",
-                            "参考：0.5 = 低沉；1.0 = 原声；1.4 = 尖锐；2.0 = 非常尖锐。",
-                            "取值范围：0.5 ~ 2.0",
-                            "默认值：1.4"
-                    )
+                    .comment("暴击音效音调，取值范围：0.5 ~ 2.0，默认值：1.4")
                     .defineInRange("critPitch", 1.4D, 0.5D, 2.0D);
 
             b.pop();
@@ -244,48 +209,127 @@ public final class ElbowStrikeConfig {
             // ============================================================
             b.comment(
                     "【招架设置】",
-                    "肘击后开启一段短窗口（默认 0.5 秒）。",
-                    "窗口内被生物攻击时触发招架：完全免伤，播放音效，并对攻击者释放一次肘击。",
-                    "注意：弹射物（箭、火球等）不会触发招架；一次窗口只能招架一次。"
+                    "肘击命中后开启一段短窗口。",
+                    "窗口内被近距离生物攻击时触发招架：完全免伤，播放音效，并对攻击者释放一次肘击。",
+                    "注意：弹射物（箭、火球）不会触发；一次窗口只能招架一次。"
             ).push("parry");
 
             enableParry = b
-                    .comment(
-                            "是否启用招架",
-                            "true  = 启用",
-                            "false = 禁用",
-                            "默认值：true"
-                    )
+                    .comment("是否启用招架，默认值：true")
                     .define("enableParry", true);
 
             parryWindowTicks = b
                     .comment(
                             "招架窗口时长（单位：tick，20 tick = 1 秒）",
-                            "含义：肘击后多久之内被攻击可以触发招架。",
-                            "参考：10 = 0.5 秒（默认）；20 = 1 秒。",
+                            "参考：5 = 0.25 秒（默认）；10 = 0.5 秒。",
                             "取值范围：0 ~ 100",
-                            "默认值：3"
+                            "默认值：5"
                     )
-                    .defineInRange("parryWindowTicks", 3, 0, 100);
+                    .defineInRange("parryWindowTicks", 5, 0, 100);
 
             parryCounterSpin = b
-                    .comment(
-                            "招架反击时是否让攻击者进入旋转状态",
-                            "true  = 被招架的攻击者会被击飞并旋转",
-                            "false = 只击飞，不旋转",
-                            "默认值：true"
-                    )
+                    .comment("招架反击时是否让攻击者进入旋转状态，默认值：true")
                     .define("parryCounterSpin", true);
 
             parryCounterKnockbackMult = b
+                    .comment("招架反击击退倍率（乘算），取值范围：0.0 ~ 5.0，默认值：1.5")
+                    .defineInRange("parryCounterKnockbackMult", 1.5D, 0.0D, 5.0D);
+
+            b.pop();
+
+            // ============================================================
+            // 雷霆形态
+            // ============================================================
+            b.comment(
+                    "【雷霆形态设置】",
+                    "按 K 激活：给玩家一个向上的初速度（伪悬停），",
+                    "从激活瞬间开始就在周围不断召唤雷电，",
+                    "落地时产生雷暴，对范围内生物造成伤害与击退。"
+            ).push("thunder_form");
+
+            enableThunderForm = b
+                    .comment("是否启用雷霆形态，默认值：true")
+                    .define("enableThunderForm", true);
+
+            thunderFormCooldown = b
                     .comment(
-                            "招架反击击退倍率（乘算）",
-                            "含义：反击肘击的击退 = 基础击退 × 此倍率。",
-                            "参考：1.0 = 与普通肘击相同；1.5 = 明显更强。",
+                            "冷却时间（单位：tick，20 tick = 1 秒）",
+                            "取值范围：0 ~ 24000",
+                            "默认值：600（30 秒）"
+                    )
+                    .defineInRange("thunderFormCooldown", 600, 0, 24000);
+
+            thunderFormUpSpeed = b
+                    .comment(
+                            "向上初速度（单位：格/tick）",
+                            "含义：激活瞬间给玩家向上的初速度，之后由重力自然减速到顶点，再自然下落。",
+                            "参考：1.0 ≈ 跳 4 格；1.5 ≈ 跳 8~10 格（默认）；2.0 ≈ 跳 15 格；3.0 ≈ 跳 30 格。",
+                            "注意：太大会导致隧道穿过方块。",
+                            "取值范围：0.3 ~ 5.0",
+                            "默认值：1.5"
+                    )
+                    .defineInRange("thunderFormUpSpeed", 1.5D, 0.3D, 5.0D);
+
+            thunderFormLightningRadius = b
+                    .comment(
+                            "雷电生成范围（单位：格）",
+                            "含义：以玩家为中心，在此半径内召唤雷电。",
+                            "取值范围：5.0 ~ 50.0",
+                            "默认值：20.0"
+                    )
+                    .defineInRange("thunderFormLightningRadius", 20.0D, 5.0D, 50.0D);
+
+            thunderFormLightningInterval = b
+                    .comment(
+                            "雷电生成间隔（单位：tick）",
+                            "参考：5 = 0.25 秒（默认）；10 = 0.5 秒；3 = 极密集。",
+                            "取值范围：1 ~ 100",
+                            "默认值：5"
+                    )
+                    .defineInRange("thunderFormLightningInterval", 5, 1, 100);
+
+            thunderFormLightningDamage = b
+                    .comment(
+                            "每道雷电的伤害（单位：点）",
+                            "取值范围：0.0 ~ 100.0",
+                            "默认值：6.0（3 颗心）"
+                    )
+                    .defineInRange("thunderFormLightningDamage", 6.0D, 0.0D, 100.0D);
+
+            thunderFormImpactRadius = b
+                    .comment(
+                            "落地雷暴半径（单位：格）",
+                            "取值范围：1.0 ~ 30.0",
+                            "默认值：10.0"
+                    )
+                    .defineInRange("thunderFormImpactRadius", 10.0D, 1.0D, 30.0D);
+
+            thunderFormImpactDamage = b
+                    .comment(
+                            "落地雷暴伤害（单位：点）",
+                            "取值范围：0.0 ~ 200.0",
+                            "默认值：12.0（6 颗心）"
+                    )
+                    .defineInRange("thunderFormImpactDamage", 12.0D, 0.0D, 200.0D);
+
+            thunderFormImpactKnockback = b
+                    .comment(
+                            "落地雷暴的击退强度（水平 + 向上）",
                             "取值范围：0.0 ~ 5.0",
                             "默认值：1.5"
                     )
-                    .defineInRange("parryCounterKnockbackMult", 1.5D, 0.0D, 5.0D);
+                    .defineInRange("thunderFormImpactKnockback", 1.5D, 0.0D, 5.0D);
+
+            // ─────────────────────────────────────────────
+            // 彩蛋：允许摔落伤害
+            thunderFormAllowFallDamage = b
+                    .comment(
+                            "牢大！！！",
+                            "false = 屏蔽摔落伤害（默认，安全落地）",
+                            "true  = 不再屏蔽，从高处落下会受到坠落伤害",
+                            "默认值：false"
+                    )
+                    .define("thunderFormAllowFallDamage", false);
 
             b.pop();
             b.pop();

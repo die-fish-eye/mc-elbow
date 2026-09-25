@@ -1,6 +1,7 @@
 package com.example.elbowstrike.client;
 
 import com.example.elbowstrike.ElbowStrikeMod;
+import com.example.elbowstrike.network.ActivateThunderPacket;
 import com.example.elbowstrike.network.ElbowStrikePacket;
 import com.example.elbowstrike.network.NetworkHandler;
 import net.minecraft.client.Minecraft;
@@ -24,6 +25,10 @@ public final class ClientEvents {
         // 按键 -> 发包
         while (KeyBindings.ELBOW_STRIKE.consumeClick()) {
             NetworkHandler.CHANNEL.sendToServer(new ElbowStrikePacket());
+        }
+
+        while (KeyBindings.THUNDER_FORM.consumeClick()) {
+            NetworkHandler.CHANNEL.sendToServer(new ActivateThunderPacket());
         }
 
         // 玩家空中旋转
