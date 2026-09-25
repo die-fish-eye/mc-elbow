@@ -1,5 +1,6 @@
 package com.example.elbowstrike;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -19,6 +20,7 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.server.ServerLifecycleHooks;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -29,17 +31,27 @@ import java.util.UUID;
  * 雷霆形态（司空震大招）状态机。
  *
  * 流程：
- *   1. 按 K 激活：玩家进入"漂浮"阶段，缓慢匀速上升（水平方向可自由移动）。
+ *   1. 按 K 激活：玩家进入"漂浮"阶段。
  *   2. 漂浮持续 thunderFormFloatDuration tick，期间每 X tick 在 20 格内召唤一道雷电。
- *      优先落在生物身上，否则随机位置。
- *   3. 漂浮结束后进入"坠落"阶段：锁定向下的速度，快速下坠，继续劈雷。
+ *   3. 漂浮结束后进入"坠落"阶段，快速下坠，继续劈雷。
  *   4. 玩家落地 → 触发雷暴：对 10 格内所有生物造成伤害 + 击退 + 粒子。
  *
- * 说明：
- *   - 漂浮阶段每 tick 把垂直速度锁定为 +floatSpeed，玩家不会因重力下落。
- *   - 坠落阶段每 tick 把垂直速度锁定为 -fallSpeed，玩家快速砸向地面。
- *   - 默认全程清零 fallDistance，避免摔伤；彩蛋配置可放开。
- *   - 超时保护，防止玩家卡在空中（比如鞘翅、创造飞行）。
+ * 物理模型：
+ *   - 不每 tick 强行覆写垂直速度，只在"速度不足"时补一个保底推力，
+ *     其余交给原版重力，避免与其他模组 / 爆炸 / 鞘翅冲突。
+ *   - 漂浮阶段：若 v.y < floatSpeed（比如重力开始把玩家往下拉），
+ *     就把 v.y 顶到 floatSpeed。玩家整体缓慢上升。
+ *   - 坠落阶段：若 v.y > -fallSpeed（比如玩家用鞘翅减速），
+ *     就把 v.y 顶到 -fallSpeed。玩家快速下坠，但不会打断爆炸推飞。
+ *   - 若玩家被外部力量（爆炸、烟花火箭）推得更高更快，不会被本模组打断。
+ *
+ * 飞行能力：
+ *   - 漂浮阶段临时开启飞行，让客户端响应 WASD。
+ *   - 结束时恢复原状态（玩家本来就能飞就不动）。
+ *
+ * 检测：
+ *   - 雷电检测范围为"以玩家为中心的柱形"（水平 radius，垂直 ±300）。
+ *   - 无生物时随机劈点，会从玩家 Y 往下找地面，让闪电劈在地表而非半空。
  *
  * 注意：本类通过 @Mod.EventBusSubscriber 自动注册，切勿在 ElbowStrikeMod 里重复注册。
  */
@@ -53,7 +65,11 @@ public final class ThunderFormManager {
         int floatTicksLeft;
         int lightningTimer;
         int timeout;
-        boolean hasLeftGround;
+
+        // 飞行能力备份
+        boolean changedAbilities;
+        boolean originalMayfly;
+        boolean originalFlying;
     }
 
     private static final Map<UUID, State> STATES = new HashMap<>();
@@ -61,7 +77,9 @@ public final class ThunderFormManager {
 
     private ThunderFormManager() {}
 
-    /** 客户端请求激活 */
+    // ================================================================
+    // 激活
+    // ================================================================
     public static void tryActivate(ServerPlayer player) {
         var cfg = ElbowStrikeConfig.COMMON;
         if (!cfg.enableThunderForm.get()) return;
@@ -69,10 +87,8 @@ public final class ThunderFormManager {
         UUID uuid = player.getUUID();
         long now = player.level().getGameTime();
 
-        // 冷却中
         Long cd = COOLDOWNS.get(uuid);
         if (cd != null && now < cd) return;
-        // 已经在形态中
         if (STATES.containsKey(uuid)) return;
 
         int duration = cfg.thunderFormFloatDuration.get();
@@ -81,9 +97,19 @@ public final class ThunderFormManager {
         State s = new State();
         s.phase = Phase.FLOATING;
         s.floatTicksLeft = duration;
-        s.lightningTimer = 0;      // 第一 tick 立刻劈雷
-        s.timeout = duration + 400; // 漂浮时长 + 20 秒兜底
-        s.hasLeftGround = false;
+        s.lightningTimer = 0;         // 第一 tick 立刻劈雷
+        s.timeout = duration + 400;   // 漂浮 + 20 秒兜底
+
+        // 给玩家飞行能力，让客户端响应 WASD
+        if (!player.getAbilities().mayfly) {
+            s.changedAbilities = true;
+            s.originalMayfly = false;
+            s.originalFlying = player.getAbilities().flying;
+            player.getAbilities().mayfly = true;
+            player.getAbilities().flying = true;
+            player.onUpdateAbilities();
+        }
+
         STATES.put(uuid, s);
         COOLDOWNS.put(uuid, now + cfg.thunderFormCooldown.get());
 
@@ -106,6 +132,9 @@ public final class ThunderFormManager {
         }
     }
 
+    // ================================================================
+    // Server tick
+    // ================================================================
     @SubscribeEvent
     public static void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
@@ -123,6 +152,7 @@ public final class ThunderFormManager {
             State s = entry.getValue();
 
             if (p == null || !p.isAlive()) {
+                restoreAbilities(p, s);
                 it.remove();
                 continue;
             }
@@ -142,26 +172,30 @@ public final class ThunderFormManager {
 
         // 超时保护
         if (--s.timeout <= 0) {
-            detonateThunderstorm(p);
+            finish(p, s);
             it.remove();
             return;
         }
 
-        // 是否允许摔落伤害（彩蛋）
-        boolean allowFallDamage = cfg.thunderFormAllowFallDamage.get();
-        if (!allowFallDamage) {
+        // 摔落伤害（彩蛋）
+        if (!cfg.thunderFormAllowFallDamage.get()) {
             p.fallDistance = 0.0F;
         }
 
-        // 记录是否离过地
-        boolean onGround = p.onGround() || p.isInWater() || p.isInLava();
-        if (!onGround) {
-            s.hasLeftGround = true;
-        } else if (s.hasLeftGround && s.phase == Phase.FALLING) {
-            // 只有在坠落阶段才允许落地触发雷暴
-            detonateThunderstorm(p);
-            it.remove();
-            return;
+        // 防御玩家手动关闭飞行
+        if (s.changedAbilities && !p.getAbilities().flying) {
+            p.getAbilities().flying = true;
+            p.onUpdateAbilities();
+        }
+
+        // 只有坠落阶段才判定落地
+        if (s.phase == Phase.FALLING) {
+            boolean onGround = p.onGround() || p.isInWater() || p.isInLava();
+            if (onGround) {
+                finish(p, s);
+                it.remove();
+                return;
+            }
         }
 
         switch (s.phase) {
@@ -169,7 +203,7 @@ public final class ThunderFormManager {
             case FALLING  -> tickFalling(p, s);
         }
 
-        // ---- 从按 K 那一刻起就劈雷，不管哪个阶段 ----
+        // ---- 劈雷 ----
         if (s.lightningTimer <= 0) {
             spawnLightning(p);
             s.lightningTimer = cfg.thunderFormLightningInterval.get();
@@ -177,7 +211,7 @@ public final class ThunderFormManager {
             s.lightningTimer--;
         }
 
-        // 空中拖尾粒子
+        // 拖尾粒子
         if (p.level() instanceof ServerLevel sl) {
             sl.sendParticles(
                     ParticleTypes.ELECTRIC_SPARK,
@@ -188,23 +222,29 @@ public final class ThunderFormManager {
     }
 
     // ================================================================
-    // 漂浮阶段：缓慢匀速上升，水平移动保留
+    // 漂浮阶段：只在速度不足时补一个保底上升速度
     // ================================================================
     private static void tickFloating(ServerPlayer p, State s) {
         var cfg = ElbowStrikeConfig.COMMON;
-        double speed = cfg.thunderFormFloatSpeed.get();
+        double minUp = cfg.thunderFormFloatSpeed.get();
 
         Vec3 v = p.getDeltaMovement();
-        p.setDeltaMovement(v.x, speed, v.z);
-        p.hasImpulse = true;
-        p.hurtMarked = true;
+
+        // 只在玩家"开始下落 / 上升太慢"时补速度
+        // 若玩家已被爆炸/烟花推得更高更快，不动
+        if (v.y < minUp) {
+            p.setDeltaMovement(v.x, minUp, v.z);
+            p.hasImpulse = true;
+            p.hurtMarked = true;
+        }
 
         s.floatTicksLeft--;
         if (s.floatTicksLeft <= 0) {
-            // 进入坠落阶段
+            // 切换到坠落阶段
             s.phase = Phase.FALLING;
-            s.timeout = 400;   // 20 秒坠落兜底
+            s.timeout = 400;
 
+            // 给一次向下的初速度，让玩家迅速脱离漂浮状态
             double fall = cfg.thunderFormFallSpeed.get();
             Vec3 v2 = p.getDeltaMovement();
             p.setDeltaMovement(v2.x, -fall, v2.z);
@@ -222,20 +262,25 @@ public final class ThunderFormManager {
     }
 
     // ================================================================
-    // 坠落阶段：锁定向下速度，快速砸向地面
+    // 坠落阶段：只在"下落不够快"时补一个保底下落速度
     // ================================================================
     private static void tickFalling(ServerPlayer p, State s) {
         var cfg = ElbowStrikeConfig.COMMON;
-        double fall = cfg.thunderFormFallSpeed.get();
+        double minDown = cfg.thunderFormFallSpeed.get();
 
         Vec3 v = p.getDeltaMovement();
-        p.setDeltaMovement(v.x, -fall, v.z);
-        p.hasImpulse = true;
-        p.hurtMarked = true;
+
+        // 只在玩家"下落速度不够快"时补速度
+        // 若玩家被爆炸推得更高、或用鞘翅试图减速，会被纠正
+        if (v.y > -minDown) {
+            p.setDeltaMovement(v.x, -minDown, v.z);
+            p.hasImpulse = true;
+            p.hurtMarked = true;
+        }
     }
 
     // ================================================================
-    // 召唤单道雷电
+    // 召唤单道雷电（柱形检测）
     // ================================================================
     private static void spawnLightning(ServerPlayer player) {
         if (!(player.level() instanceof ServerLevel level)) return;
@@ -244,12 +289,32 @@ public final class ThunderFormManager {
         double radius = cfg.thunderFormLightningRadius.get();
         float dmg = cfg.thunderFormLightningDamage.get().floatValue();
 
-        // 优先找范围内的生物
-        List<LivingEntity> candidates = level.getEntitiesOfClass(
+        double px = player.getX();
+        double py = player.getY();
+        double pz = player.getZ();
+
+        // ---------- 柱形检测 ----------
+        AABB column = new AABB(
+                px - radius, py - 300.0D, pz - radius,
+                px + radius, py + 300.0D, pz + radius
+        );
+
+        List<LivingEntity> raw = level.getEntitiesOfClass(
                 LivingEntity.class,
-                player.getBoundingBox().inflate(radius),
+                column,
                 e -> e != player && e.isAlive() && e.isPickable()
         );
+
+        // 细筛成圆柱
+        double r2 = radius * radius;
+        List<LivingEntity> candidates = new ArrayList<>();
+        for (LivingEntity e : raw) {
+            double dx = e.getX() - px;
+            double dz = e.getZ() - pz;
+            if (dx * dx + dz * dz <= r2) {
+                candidates.add(e);
+            }
+        }
 
         double tx, ty, tz;
         if (!candidates.isEmpty()) {
@@ -259,15 +324,30 @@ public final class ThunderFormManager {
             ty = target.getY();
             tz = target.getZ();
         } else {
-            // 无生物 → 玩家周围随机位置（略微偏下，让闪电从上方劈下来）
+            // 无生物 → 随机水平位置，往下找地面
             double a = player.getRandom().nextDouble() * Math.PI * 2.0D;
             double r = radius * Math.sqrt(player.getRandom().nextDouble());
-            tx = player.getX() + Math.cos(a) * r;
-            ty = player.getY() - 3.0D;
-            tz = player.getZ() + Math.sin(a) * r;
+            tx = px + Math.cos(a) * r;
+            tz = pz + Math.sin(a) * r;
+
+            int bx = (int) Math.floor(tx);
+            int bz = (int) Math.floor(tz);
+            int startY = (int) Math.floor(py);
+            int groundY = startY - 3;
+
+            int minY = Math.max(level.getMinBuildHeight(), startY - 120);
+            BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+            for (int y = startY; y >= minY; y--) {
+                pos.set(bx, y, bz);
+                if (!level.getBlockState(pos).isAir()) {
+                    groundY = y + 1;
+                    break;
+                }
+            }
+            ty = groundY;
         }
 
-        // 视觉闪电
+        // ---------- 视觉闪电 ----------
         LightningBolt bolt = EntityType.LIGHTNING_BOLT.create(level);
         if (bolt != null) {
             bolt.moveTo(tx, ty, tz);
@@ -275,7 +355,7 @@ public final class ThunderFormManager {
             level.addFreshEntity(bolt);
         }
 
-        // 伤害
+        // ---------- 伤害 ----------
         if (dmg > 0.0F) {
             AABB area = new AABB(tx - 2.0D, ty - 1.0D, tz - 2.0D,
                                  tx + 2.0D, ty + 3.0D, tz + 2.0D);
@@ -288,7 +368,7 @@ public final class ThunderFormManager {
             }
         }
 
-        // 音效
+        // ---------- 音效 ----------
         level.playSound(
                 null, tx, ty, tz,
                 SoundEvents.LIGHTNING_BOLT_THUNDER,
@@ -312,7 +392,6 @@ public final class ThunderFormManager {
         double py = player.getY();
         double pz = player.getZ();
 
-        // 视觉粒子
         level.sendParticles(
                 ParticleTypes.EXPLOSION_EMITTER,
                 px, py, pz,
@@ -329,7 +408,6 @@ public final class ThunderFormManager {
                 60, radius * 0.5D, 0.2D, radius * 0.5D, 0.15D
         );
 
-        // 音效
         level.playSound(null, px, py, pz,
                 SoundEvents.LIGHTNING_BOLT_THUNDER,
                 SoundSource.PLAYERS, 2.0F, 0.7F);
@@ -337,7 +415,6 @@ public final class ThunderFormManager {
                 SoundEvents.GENERIC_EXPLODE,
                 SoundSource.PLAYERS, 1.5F, 1.2F);
 
-        // 伤害 + 击退
         if (dmg > 0.0F || knock > 0.0D) {
             DamageSource src = level.damageSources().playerAttack(player);
             AABB area = player.getBoundingBox().inflate(radius);
@@ -367,7 +444,22 @@ public final class ThunderFormManager {
     }
 
     // ================================================================
-    // 取消坠落伤害（若配置允许则不取消）
+    // 结束：恢复能力 + 触发雷暴
+    // ================================================================
+    private static void finish(ServerPlayer p, State s) {
+        restoreAbilities(p, s);
+        detonateThunderstorm(p);
+    }
+
+    private static void restoreAbilities(ServerPlayer p, State s) {
+        if (p == null || s == null || !s.changedAbilities) return;
+        p.getAbilities().mayfly = s.originalMayfly;
+        p.getAbilities().flying = s.originalFlying;
+        p.onUpdateAbilities();
+    }
+
+    // ================================================================
+    // 取消坠落伤害（彩蛋可放开）
     // ================================================================
     @SubscribeEvent
     public static void onFall(LivingFallEvent event) {
@@ -385,9 +477,9 @@ public final class ThunderFormManager {
     @SubscribeEvent
     public static void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.getEntity() instanceof ServerPlayer sp) {
-            UUID uuid = sp.getUUID();
-            STATES.remove(uuid);
-            COOLDOWNS.remove(uuid);
+            State s = STATES.remove(sp.getUUID());
+            restoreAbilities(sp, s);
+            COOLDOWNS.remove(sp.getUUID());
         }
     }
 }
