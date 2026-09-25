@@ -4,6 +4,7 @@ import com.example.elbowstrike.ElbowStrikeMod;
 import com.example.elbowstrike.network.ActivateThunderPacket;
 import com.example.elbowstrike.network.ElbowStrikePacket;
 import com.example.elbowstrike.network.NetworkHandler;
+import com.example.elbowstrike.network.UniversalPullPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.event.TickEvent;
@@ -29,6 +30,10 @@ public final class ClientEvents {
 
         while (KeyBindings.THUNDER_FORM.consumeClick()) {
             NetworkHandler.CHANNEL.sendToServer(new ActivateThunderPacket());
+        }
+
+        while (KeyBindings.UNIVERSAL_PULL.consumeClick()) {
+            NetworkHandler.CHANNEL.sendToServer(new UniversalPullPacket());
         }
 
         // 玩家空中旋转

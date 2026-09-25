@@ -42,5 +42,12 @@ public final class NetworkHandler {
                 .decoder(ActivateThunderPacket::new)
                 .consumerMainThread(ActivateThunderPacket::handle)
                 .add();
+
+        // C2S：请求万象天引
+        CHANNEL.messageBuilder(UniversalPullPacket.class, id++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(UniversalPullPacket::encode)
+                .decoder(UniversalPullPacket::new)
+                .consumerMainThread(UniversalPullPacket::handle)
+                .add();
     }
 }

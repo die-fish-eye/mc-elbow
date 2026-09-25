@@ -71,6 +71,15 @@ public final class ElbowStrikeConfig {
         public final ForgeConfigSpec.DoubleValue thunderFormImpactKnockback;
         public final ForgeConfigSpec.BooleanValue thunderFormAllowFallDamage;
 
+        // ---- 万象天引 ----
+        public final ForgeConfigSpec.BooleanValue enableUniversalPull;
+        public final ForgeConfigSpec.IntValue universalPullCooldown;
+        public final ForgeConfigSpec.DoubleValue universalPullRange;
+        public final ForgeConfigSpec.DoubleValue universalPullCone;
+        public final ForgeConfigSpec.IntValue universalPullDuration;
+        public final ForgeConfigSpec.DoubleValue universalPullSpeed;
+        public final ForgeConfigSpec.DoubleValue universalPullStopDistance;
+
         Common(ForgeConfigSpec.Builder b) {
             b.comment(
                     "Elbow Strike - 肘击模组配置文件",
@@ -264,19 +273,17 @@ public final class ElbowStrikeConfig {
             thunderFormFloatSpeed = b
                     .comment(
                             "漂浮上升速度（单位：格/tick，正值向上）",
-                            "含义：漂浮阶段每 tick 锁定的垂直速度。",
-                            "参考：0.05 = 极慢；0.15 = 缓慢上升（默认）；0.3 = 较快上升。",
-                            "注意：太大会让漂浮手感接近弹射。",
-                            "取值范围：0.02 ~ 1.0",
+                            "通过 levitation 效果实现，实际速度会被量化到 0.05 的整数倍。",
+                            "参考：0.05 = 极慢；0.15 = 缓慢上升（默认）；0.25 = 较快。",
+                            "取值范围：0.02 ~ 0.5",
                             "默认值：0.15"
                     )
-                    .defineInRange("thunderFormFloatSpeed", 0.15D, 0.02D, 1.0D);
+                    .defineInRange("thunderFormFloatSpeed", 0.15D, 0.02D, 0.5D);
 
             thunderFormFloatDuration = b
                     .comment(
                             "漂浮持续时间（单位：tick，20 tick = 1 秒）",
                             "参考：100 = 5 秒（默认）；60 = 3 秒；200 = 10 秒。",
-                            "总上升高度 ≈ 漂浮速度 × 持续时间。",
                             "取值范围：10 ~ 2400",
                             "默认值：100"
                     )
@@ -284,9 +291,9 @@ public final class ElbowStrikeConfig {
 
             thunderFormFallSpeed = b
                     .comment(
-                            "坠落速度（单位：格/tick，正值表示向下速度大小）",
-                            "含义：漂浮结束后锁定的垂直速度大小。",
-                            "参考：1.0 = 稍快；2.0 = 迅速（默认）；3.0 = 极快（可能穿薄方块）。",
+                            "坠落初速度（单位：格/tick）",
+                            "含义：漂浮结束时给玩家一次向下的初速度，之后由重力自然加速。",
+                            "参考：1.0 = 稍慢；2.0 = 迅速（默认）；3.0 = 极快。",
                             "取值范围：0.5 ~ 5.0",
                             "默认值：2.0"
                     )
@@ -306,9 +313,9 @@ public final class ElbowStrikeConfig {
                             "雷电生成间隔（单位：tick）",
                             "参考：5 = 0.25 秒（默认）；10 = 0.5 秒；3 = 极密集。",
                             "取值范围：1 ~ 100",
-                            "默认值：1"
+                            "默认值：5"
                     )
-                    .defineInRange("thunderFormLightningInterval", 1, 1, 100);
+                    .defineInRange("thunderFormLightningInterval", 5, 1, 100);
 
             thunderFormLightningDamage = b
                     .comment(
@@ -342,16 +349,84 @@ public final class ElbowStrikeConfig {
                     )
                     .defineInRange("thunderFormImpactKnockback", 1.5D, 0.0D, 5.0D);
 
-            // ─────────────────────────────────────────────
-            // 彩蛋：允许摔落伤害
             thunderFormAllowFallDamage = b
                     .comment(
-                            "不！牢大！！！",
+                            "【彩蛋】是否允许雷霆形态期间受到摔落伤害",
                             "false = 屏蔽摔落伤害（默认，安全落地）",
                             "true  = 不再屏蔽，从高处落下会受到坠落伤害",
+                            "小心。",
                             "默认值：false"
                     )
                     .define("thunderFormAllowFallDamage", false);
+
+            b.pop();
+
+            // ============================================================
+            // 万象天引
+            // ============================================================
+            b.comment(
+                    "【万象天引设置】",
+                    "按 X 激活：将前方锥形范围内的所有生物拉向玩家面前。",
+                    "目标会被拉拽到玩家面前 stopDistance 格处，拉拽期间重力被关闭。"
+            ).push("universal_pull");
+
+            enableUniversalPull = b
+                    .comment("是否启用万象天引，默认值：true")
+                    .define("enableUniversalPull", true);
+
+            universalPullCooldown = b
+                    .comment(
+                            "冷却时间（单位：tick，20 tick = 1 秒）",
+                            "取值范围：0 ~ 1200",
+                            "默认值：60（3 秒）"
+                    )
+                    .defineInRange("universalPullCooldown", 60, 0, 1200);
+
+            universalPullRange = b
+                    .comment(
+                            "作用距离（单位：格）",
+                            "取值范围：1.0 ~ 50.0",
+                            "默认值：15.0"
+                    )
+                    .defineInRange("universalPullRange", 15.0D, 1.0D, 50.0D);
+
+            universalPullCone = b
+                    .comment(
+                            "前方锥形判定阈值（无量纲）",
+                            "0.7 ≈ 前方 45°；0.5 ≈ 前方 60°；0.0 ≈ 360° 全方位。",
+                            "取值范围：-1.0 ~ 1.0",
+                            "默认值：0.0（全方位，无需面朝目标）"
+                    )
+                    .defineInRange("universalPullCone", 0.0D, -1.0D, 1.0D);
+
+            universalPullDuration = b
+                    .comment(
+                            "拉拽持续时间（单位：tick）",
+                            "含义：最多持续多久，目标就到达玩家面前或提前结束。",
+                            "取值范围：1 ~ 200",
+                            "默认值：20（1 秒）"
+                    )
+                    .defineInRange("universalPullDuration", 20, 1, 200);
+
+            universalPullSpeed = b
+                    .comment(
+                            "拉拽速度（单位：格/tick）",
+                            "含义：每 tick 给目标施加的朝向玩家的速度大小。",
+                            "参考：0.5 = 缓慢拉近；1.0 = 明显拉拽（默认）；2.0 = 猛拉。",
+                            "取值范围：0.1 ~ 5.0",
+                            "默认值：1.0"
+                    )
+                    .defineInRange("universalPullSpeed", 1.0D, 0.1D, 5.0D);
+
+            universalPullStopDistance = b
+                    .comment(
+                            "停止距离（单位：格）",
+                            "含义：目标被拉到玩家面前多远停下。",
+                            "取值太小会让目标挤进玩家身体，太大则拉不到面前。",
+                            "取值范围：1.0 ~ 5.0",
+                            "默认值：2.0"
+                    )
+                    .defineInRange("universalPullStopDistance", 2.0D, 1.0D, 5.0D);
 
             b.pop();
             b.pop();

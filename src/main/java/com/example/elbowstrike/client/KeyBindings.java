@@ -32,11 +32,20 @@ public final class KeyBindings {
             CATEGORY
     );
 
+    public static final KeyMapping UNIVERSAL_PULL = new KeyMapping(
+            "key.elbowstrike.universal_pull",
+            KeyConflictContext.IN_GAME,
+            InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_X,
+            CATEGORY
+    );
+
     private KeyBindings() {}
 
     @SubscribeEvent
     public static void onRegisterKeys(RegisterKeyMappingsEvent event) {
         event.register(ELBOW_STRIKE);
         event.register(THUNDER_FORM);
+        event.register(UNIVERSAL_PULL);
     }
 }
