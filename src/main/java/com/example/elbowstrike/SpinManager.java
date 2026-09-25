@@ -1,9 +1,8 @@
 package com.example.elbowstrike;
 
-import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.level.Level;
+import net.minecraft.world.entity.Mob;
 import net.minecraftforge.event.entity.living.LivingEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -13,8 +12,8 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * 管理「被肘飞后在空中旋转」的逻辑（仅普通生物，玩家由客户端处理）。
- * 使用 LivingTickEvent，确保在 AI 覆盖朝向之后、发包之前修改 yRot。
+ * 管理「被肘飞后在空中旋转」的逻辑（仅普通生物）。
+ * 关键点：旋转期间对 Mob 禁用 AI，否则 AI 会在每 tick 覆写 yRot/yHeadRot。
  */
 @Mod.EventBusSubscriber(modid = ElbowStrikeMod.MODID)
 public final class SpinManager {
@@ -25,12 +24,12 @@ public final class SpinManager {
     private static final int DEFAULT_DURATION = 60;
 
     private static final class SpinData {
-        final ResourceKey<Level> dimension;
         int ticksLeft;
+        boolean hadAiDisabled;   // 记录原始 AI 状态，结束后恢复
 
-        SpinData(ResourceKey<Level> dimension, int ticksLeft) {
-            this.dimension = dimension;
+        SpinData(int ticksLeft, boolean hadAiDisabled) {
             this.ticksLeft = ticksLeft;
+            this.hadAiDisabled = hadAiDisabled;
         }
     }
 
@@ -43,8 +42,15 @@ public final class SpinManager {
     }
 
     public static void startSpin(LivingEntity entity, int duration) {
-        SPINNING.put(entity.getUUID(),
-                new SpinData(entity.level().dimension(), duration));
+        if (entity.level().isClientSide()) return;
+
+        boolean wasAiDisabled = false;
+        if (entity instanceof Mob mob) {
+            wasAiDisabled = mob.isNoAi();
+            mob.setNoAi(true);   // 关键：临时禁用 AI
+        }
+
+        SPINNING.put(entity.getUUID(), new SpinData(duration, wasAiDisabled));
     }
 
     @SubscribeEvent
@@ -54,28 +60,24 @@ public final class SpinManager {
         LivingEntity entity = event.getEntity();
         if (entity.level().isClientSide()) return;
 
-        // 玩家由客户端权威控制，旋转由 ClientSpinHandler 处理，这里跳过
-        if (entity instanceof ServerPlayer) {
-            SPINNING.remove(entity.getUUID());
-            return;
-        }
+        // 玩家由客户端处理
+        if (entity instanceof ServerPlayer) return;
 
         SpinData data = SPINNING.get(entity.getUUID());
         if (data == null) return;
 
-        // 清理无效状态
-        if (!entity.isAlive() || !entity.level().dimension().equals(data.dimension)) {
-            SPINNING.remove(entity.getUUID());
+        if (!entity.isAlive()) {
+            stopSpin(entity, data);
             return;
         }
 
         if (data.ticksLeft <= 0) {
-            SPINNING.remove(entity.getUUID());
+            stopSpin(entity, data);
             return;
         }
         data.ticksLeft--;
 
-        // 核心条件：只有离地（被肘飞）时才强制旋转
+        // 只在离地时强制旋转
         if (entity.onGround()) return;
 
         float yaw = entity.getYRot() + SPIN_SPEED;
@@ -87,5 +89,12 @@ public final class SpinManager {
         entity.yRotO = yaw - SPIN_SPEED;
         entity.yHeadRotO = yaw - SPIN_SPEED;
         entity.yBodyRotO = yaw - SPIN_SPEED;
+    }
+
+    private static void stopSpin(LivingEntity entity, SpinData data) {
+        SPINNING.remove(entity.getUUID());
+        if (entity instanceof Mob mob && !data.hadAiDisabled) {
+            mob.setNoAi(false);  // 恢复 AI
+        }
     }
 }

@@ -3,12 +3,14 @@ package com.example.elbowstrike;
 import com.example.elbowstrike.network.NetworkHandler;
 import com.example.elbowstrike.network.SpinStartPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -53,12 +55,8 @@ public final class ElbowStrikeHandler {
 
         LivingEntity target = findTarget(player);
         if (target == null) {
-            // 空挥也播放音效
-            level.playSound(null,
-                    player.getX(), player.getY(), player.getZ(),
-                    ModSounds.ELBOW_STRIKE.get(),
-                    SoundSource.PLAYERS,
-                    0.6F, 1.2F);
+            // 空挥也播放音效（音量小一点）
+            broadcastSound(level, player.getX(), player.getY(), player.getZ(), 0.6F, 1.2F);
             return;
         }
 
@@ -87,7 +85,6 @@ public final class ElbowStrikeHandler {
         target.hasImpulse = true;
         target.hurtMarked = true;
 
-        // 玩家目标需要额外同步速度包
         if (target instanceof ServerPlayer serverPlayer) {
             serverPlayer.connection.send(new ClientboundSetEntityMotionPacket(serverPlayer));
         }
@@ -101,16 +98,38 @@ public final class ElbowStrikeHandler {
                     NetworkDirection.PLAY_TO_CLIENT
             );
         } else {
-            // 普通生物：服务端直接强制旋转
+            // 生物：服务端强制旋转（内部会自动禁用 AI 防止覆盖）
             SpinManager.startSpin(target, SPIN_DURATION);
         }
 
-        // ---- 音效 ----
-        level.playSound(null,
+        // ---- 音效：明确广播给所有附近玩家 ----
+        broadcastSound(level,
                 target.getX(), target.getY(), target.getZ(),
+                1.0F, 1.0F);
+    }
+
+    /**
+     * 用原版音效包把声音明确广播给附近的所有玩家。
+     * 比 level.playSound(null, ...) 更可靠，避免某些情况下静默失败。
+     */
+    private static void broadcastSound(Level level, double x, double y, double z,
+                                       float volume, float pitch) {
+        if (level.getServer() == null) return;
+
+        ClientboundSoundPacket packet = new ClientboundSoundPacket(
                 ModSounds.ELBOW_STRIKE.get(),
                 SoundSource.PLAYERS,
-                1.0F, 1.0F);
+                x, y, z,
+                volume, pitch,
+                level.random.nextLong()
+        );
+
+        level.getServer().getPlayerList().getPlayers().forEach(p -> {
+            // 只发给 64 格以内的玩家
+            if (p.distanceToSqr(x, y, z) < 64.0D * 64.0D) {
+                p.connection.send(packet);
+            }
+        });
     }
 
     /** 在玩家前方锥形范围内寻找最近的活体目标 */
