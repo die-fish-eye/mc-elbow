@@ -329,9 +329,9 @@ public final class ElbowStrikeConfig {
                     .comment(
                             "落地雷暴半径（单位：格）",
                             "取值范围：1.0 ~ 30.0",
-                            "默认值：10.0"
+                            "默认值：15.0"
                     )
-                    .defineInRange("thunderFormImpactRadius", 10.0D, 1.0D, 30.0D);
+                    .defineInRange("thunderFormImpactRadius", 15.0D, 1.0D, 30.0D);
 
             thunderFormImpactDamage = b
                     .comment(
@@ -365,9 +365,7 @@ public final class ElbowStrikeConfig {
             // 万象天引
             // ============================================================
             b.comment(
-                    "【万象天引设置】",
-                    "按 X 激活：将前方锥形范围内的所有生物拉向玩家面前。",
-                    "目标会被拉拽到玩家面前 stopDistance 格处，拉拽期间重力被关闭。"
+                    "【万象天引设置】"
             ).push("universal_pull");
 
             enableUniversalPull = b
@@ -395,9 +393,9 @@ public final class ElbowStrikeConfig {
                             "前方锥形判定阈值（无量纲）",
                             "0.7 ≈ 前方 45°；0.5 ≈ 前方 60°；0.0 ≈ 360° 全方位。",
                             "取值范围：-1.0 ~ 1.0",
-                            "默认值：0.0（全方位，无需面朝目标）"
+                            "默认值：0.5（全方位，无需面朝目标）"
                     )
-                    .defineInRange("universalPullCone", 0.0D, -1.0D, 1.0D);
+                    .defineInRange("universalPullCone", 0.5D, -1.0D, 1.0D);
 
             universalPullDuration = b
                     .comment(
