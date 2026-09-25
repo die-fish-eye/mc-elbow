@@ -8,6 +8,8 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LightningBolt;
 import net.minecraft.world.entity.LivingEntity;
@@ -31,27 +33,21 @@ import java.util.UUID;
  * 雷霆形态（司空震大招）状态机。
  *
  * 流程：
- *   1. 按 K 激活：玩家进入"漂浮"阶段。
- *   2. 漂浮持续 thunderFormFloatDuration tick，期间每 X tick 在 20 格内召唤一道雷电。
- *   3. 漂浮结束后进入"坠落"阶段，快速下坠，继续劈雷。
- *   4. 玩家落地 → 触发雷暴：对 10 格内所有生物造成伤害 + 击退 + 粒子。
+ *   1. 按 K 激活：玩家获得 levitation（漂浮）效果，缓慢上升。
+ *      期间每 X tick 在 20 格内召唤一道雷电。
+ *   2. 漂浮持续 thunderFormFloatDuration tick 后：
+ *      移除 levitation，给一次向下的初速度，让重力自然加速下坠。
+ *   3. 玩家落地 → 触发雷暴：对 10 格内所有生物造成伤害 + 击退 + 粒子。
  *
- * 物理模型：
- *   - 不每 tick 强行覆写垂直速度，只在"速度不足"时补一个保底推力，
- *     其余交给原版重力，避免与其他模组 / 爆炸 / 鞘翅冲突。
- *   - 漂浮阶段：若 v.y < floatSpeed（比如重力开始把玩家往下拉），
- *     就把 v.y 顶到 floatSpeed。玩家整体缓慢上升。
- *   - 坠落阶段：若 v.y > -fallSpeed（比如玩家用鞘翅减速），
- *     就把 v.y 顶到 -fallSpeed。玩家快速下坠，但不会打断爆炸推飞。
- *   - 若玩家被外部力量（爆炸、烟花火箭）推得更高更快，不会被本模组打断。
+ * 为什么用 levitation？
+ *   - 原版效果自动处理垂直速度，不会像手动 setDeltaMovement + hurtMarked
+ *     那样每 tick 覆盖客户端的水平速度，所以 WASD 可以正常使用。
+ *   - 与其他模组、爆炸、烟花、鞘翅的兼容性最好。
+ *   - 显示效果由玩家状态（粒子、抖动）体现，不依赖额外逻辑。
  *
- * 飞行能力：
- *   - 漂浮阶段临时开启飞行，让客户端响应 WASD。
- *   - 结束时恢复原状态（玩家本来就能飞就不动）。
- *
- * 检测：
- *   - 雷电检测范围为"以玩家为中心的柱形"（水平 radius，垂直 ±300）。
- *   - 无生物时随机劈点，会从玩家 Y 往下找地面，让闪电劈在地表而非半空。
+ * 雷电检测：
+ *   - 以玩家为中心的柱形（水平 radius，垂直 ±300），升到高空也能劈到地面生物。
+ *   - 无生物时随机劈点，会从玩家 Y 往下找地面，让闪电劈在地表。
  *
  * 注意：本类通过 @Mod.EventBusSubscriber 自动注册，切勿在 ElbowStrikeMod 里重复注册。
  */
@@ -65,11 +61,6 @@ public final class ThunderFormManager {
         int floatTicksLeft;
         int lightningTimer;
         int timeout;
-
-        // 飞行能力备份
-        boolean changedAbilities;
-        boolean originalMayfly;
-        boolean originalFlying;
     }
 
     private static final Map<UUID, State> STATES = new HashMap<>();
@@ -100,15 +91,26 @@ public final class ThunderFormManager {
         s.lightningTimer = 0;         // 第一 tick 立刻劈雷
         s.timeout = duration + 400;   // 漂浮 + 20 秒兜底
 
-        // 给玩家飞行能力，让客户端响应 WASD
-        if (!player.getAbilities().mayfly) {
-            s.changedAbilities = true;
-            s.originalMayfly = false;
-            s.originalFlying = player.getAbilities().flying;
-            player.getAbilities().mayfly = true;
-            player.getAbilities().flying = true;
-            player.onUpdateAbilities();
-        }
+        // ---- 施加 levitation 效果实现漂浮 ----
+        // 原版 levitation 的每 tick 目标速度 ≈ 0.05 * (amplifier + 1)
+        // 把 floatSpeed 换算成 amplifier：
+        //   0.05 → amp 0
+        //   0.10 → amp 1
+        //   0.15 → amp 2（默认）
+        //   0.20 → amp 3
+        //   0.25 → amp 4
+        double speed = cfg.thunderFormFloatSpeed.get();
+        int amp = (int) Math.max(0, Math.min(4, Math.round(speed / 0.05D) - 1));
+
+        // 时长多给 5 tick，避免刚好在效果结束时还没切换阶段
+        player.addEffect(new MobEffectInstance(
+                MobEffects.LEVITATION,
+                duration + 5,
+                amp,
+                false,   // ambient
+                false,   // visible
+                false    // showIcon
+        ));
 
         STATES.put(uuid, s);
         COOLDOWNS.put(uuid, now + cfg.thunderFormCooldown.get());
@@ -152,7 +154,7 @@ public final class ThunderFormManager {
             State s = entry.getValue();
 
             if (p == null || !p.isAlive()) {
-                restoreAbilities(p, s);
+                cleanup(p);
                 it.remove();
                 continue;
             }
@@ -180,12 +182,6 @@ public final class ThunderFormManager {
         // 摔落伤害（彩蛋）
         if (!cfg.thunderFormAllowFallDamage.get()) {
             p.fallDistance = 0.0F;
-        }
-
-        // 防御玩家手动关闭飞行
-        if (s.changedAbilities && !p.getAbilities().flying) {
-            p.getAbilities().flying = true;
-            p.onUpdateAbilities();
         }
 
         // 只有坠落阶段才判定落地
@@ -222,32 +218,24 @@ public final class ThunderFormManager {
     }
 
     // ================================================================
-    // 漂浮阶段：只在速度不足时补一个保底上升速度
+    // 漂浮阶段：什么都不做，levitation 会处理上升
     // ================================================================
     private static void tickFloating(ServerPlayer p, State s) {
         var cfg = ElbowStrikeConfig.COMMON;
-        double minUp = cfg.thunderFormFloatSpeed.get();
-
-        Vec3 v = p.getDeltaMovement();
-
-        // 只在玩家"开始下落 / 上升太慢"时补速度
-        // 若玩家已被爆炸/烟花推得更高更快，不动
-        if (v.y < minUp) {
-            p.setDeltaMovement(v.x, minUp, v.z);
-            p.hasImpulse = true;
-            p.hurtMarked = true;
-        }
 
         s.floatTicksLeft--;
         if (s.floatTicksLeft <= 0) {
-            // 切换到坠落阶段
+            // 进入坠落阶段
             s.phase = Phase.FALLING;
             s.timeout = 400;
 
-            // 给一次向下的初速度，让玩家迅速脱离漂浮状态
+            // 移除 levitation
+            p.removeEffect(MobEffects.LEVITATION);
+
+            // 给一次向下的初速度，让重力接管
             double fall = cfg.thunderFormFallSpeed.get();
-            Vec3 v2 = p.getDeltaMovement();
-            p.setDeltaMovement(v2.x, -fall, v2.z);
+            Vec3 v = p.getDeltaMovement();
+            p.setDeltaMovement(v.x, -fall, v.z);
             p.hurtMarked = true;
 
             // 下坠音效
@@ -262,21 +250,11 @@ public final class ThunderFormManager {
     }
 
     // ================================================================
-    // 坠落阶段：只在"下落不够快"时补一个保底下落速度
+    // 坠落阶段：交给重力，不做任何速度干预
     // ================================================================
     private static void tickFalling(ServerPlayer p, State s) {
-        var cfg = ElbowStrikeConfig.COMMON;
-        double minDown = cfg.thunderFormFallSpeed.get();
-
-        Vec3 v = p.getDeltaMovement();
-
-        // 只在玩家"下落速度不够快"时补速度
-        // 若玩家被爆炸推得更高、或用鞘翅试图减速，会被纠正
-        if (v.y > -minDown) {
-            p.setDeltaMovement(v.x, -minDown, v.z);
-            p.hasImpulse = true;
-            p.hurtMarked = true;
-        }
+        // 重力会自然加速下坠（终速约 -3.92 格/tick）。
+        // 不干预速度 → WASD 水平移动完全自由。
     }
 
     // ================================================================
@@ -444,18 +422,17 @@ public final class ThunderFormManager {
     }
 
     // ================================================================
-    // 结束：恢复能力 + 触发雷暴
+    // 结束 / 清理
     // ================================================================
     private static void finish(ServerPlayer p, State s) {
-        restoreAbilities(p, s);
+        cleanup(p);
         detonateThunderstorm(p);
     }
 
-    private static void restoreAbilities(ServerPlayer p, State s) {
-        if (p == null || s == null || !s.changedAbilities) return;
-        p.getAbilities().mayfly = s.originalMayfly;
-        p.getAbilities().flying = s.originalFlying;
-        p.onUpdateAbilities();
+    private static void cleanup(ServerPlayer p) {
+        if (p == null) return;
+        // 保险：移除可能残留的 levitation
+        p.removeEffect(MobEffects.LEVITATION);
     }
 
     // ================================================================
@@ -477,8 +454,8 @@ public final class ThunderFormManager {
     @SubscribeEvent
     public static void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.getEntity() instanceof ServerPlayer sp) {
-            State s = STATES.remove(sp.getUUID());
-            restoreAbilities(sp, s);
+            STATES.remove(sp.getUUID());
+            cleanup(sp);
             COOLDOWNS.remove(sp.getUUID());
         }
     }
