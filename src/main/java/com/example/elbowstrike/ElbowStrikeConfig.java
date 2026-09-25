@@ -1,4 +1,4 @@
-package com.example.elbowstrike;
+﻿package com.example.elbowstrike;
 
 import net.minecraftforge.common.ForgeConfigSpec;
 import org.apache.commons.lang3.tuple.Pair;
@@ -50,6 +50,12 @@ public final class ElbowStrikeConfig {
         public final ForgeConfigSpec.DoubleValue critKnockbackHorizontalMult;
         public final ForgeConfigSpec.DoubleValue critKnockbackVerticalMult;
         public final ForgeConfigSpec.DoubleValue critPitch;
+
+        // ---- 招架 ----
+        public final ForgeConfigSpec.BooleanValue enableParry;
+        public final ForgeConfigSpec.IntValue parryWindowTicks;
+        public final ForgeConfigSpec.BooleanValue parryCounterSpin;
+        public final ForgeConfigSpec.DoubleValue parryCounterKnockbackMult;
 
         Common(ForgeConfigSpec.Builder b) {
             b.comment(
@@ -230,6 +236,56 @@ public final class ElbowStrikeConfig {
                             "默认值：1.4"
                     )
                     .defineInRange("critPitch", 1.4D, 0.5D, 2.0D);
+
+            b.pop();
+
+            // ============================================================
+            // 招架
+            // ============================================================
+            b.comment(
+                    "【招架设置】",
+                    "肘击后开启一段短窗口（默认 0.5 秒）。",
+                    "窗口内被生物攻击时触发招架：完全免伤，播放音效，并对攻击者释放一次肘击。",
+                    "注意：弹射物（箭、火球等）不会触发招架；一次窗口只能招架一次。"
+            ).push("parry");
+
+            enableParry = b
+                    .comment(
+                            "是否启用招架",
+                            "true  = 启用",
+                            "false = 禁用",
+                            "默认值：true"
+                    )
+                    .define("enableParry", true);
+
+            parryWindowTicks = b
+                    .comment(
+                            "招架窗口时长（单位：tick，20 tick = 1 秒）",
+                            "含义：肘击后多久之内被攻击可以触发招架。",
+                            "参考：10 = 0.5 秒（默认）；20 = 1 秒。",
+                            "取值范围：0 ~ 100",
+                            "默认值：10"
+                    )
+                    .defineInRange("parryWindowTicks", 10, 0, 100);
+
+            parryCounterSpin = b
+                    .comment(
+                            "招架反击时是否让攻击者进入旋转状态",
+                            "true  = 被招架的攻击者会被击飞并旋转",
+                            "false = 只击飞，不旋转",
+                            "默认值：true"
+                    )
+                    .define("parryCounterSpin", true);
+
+            parryCounterKnockbackMult = b
+                    .comment(
+                            "招架反击击退倍率（乘算）",
+                            "含义：反击肘击的击退 = 基础击退 × 此倍率。",
+                            "参考：1.0 = 与普通肘击相同；1.5 = 明显更强。",
+                            "取值范围：0.0 ~ 5.0",
+                            "默认值：1.5"
+                    )
+                    .defineInRange("parryCounterKnockbackMult", 1.5D, 0.0D, 5.0D);
 
             b.pop();
             b.pop();
