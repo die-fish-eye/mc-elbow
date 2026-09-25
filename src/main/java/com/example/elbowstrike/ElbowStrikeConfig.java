@@ -1,4 +1,4 @@
-﻿package com.example.elbowstrike;
+package com.example.elbowstrike;
 
 import net.minecraftforge.common.ForgeConfigSpec;
 import org.apache.commons.lang3.tuple.Pair;

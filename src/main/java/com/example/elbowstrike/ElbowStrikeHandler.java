@@ -1,4 +1,4 @@
-﻿package com.example.elbowstrike;
+package com.example.elbowstrike;
 
 import com.example.elbowstrike.network.NetworkHandler;
 import com.example.elbowstrike.network.SpinStartPacket;
