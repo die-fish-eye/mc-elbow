@@ -1,25 +1,19 @@
-# eclipse
-bin
-*.launch
-.settings
-.metadata
-.classpath
-.project
+# 日志
+*.log
+logs/
 
-# idea
-out
-*.ipr
-*.iws
-*.iml
-.idea
+# 系统文件
+.DS_Store
+Thumbs.db
 
-# gradle
-build
-.gradle
+# VS Code
+.vscode/
 
-# other
-eclipse
-run
+# 敏感信息
+.env
+*.pem
+*.key
 
-# Files from Forge MDK
-forge*changelog.txt
+# 临时文件
+*.tmp
+*.bak
