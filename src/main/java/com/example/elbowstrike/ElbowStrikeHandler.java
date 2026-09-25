@@ -2,15 +2,16 @@ package com.example.elbowstrike;
 
 import com.example.elbowstrike.network.NetworkHandler;
 import com.example.elbowstrike.network.SpinStartPacket;
+import net.minecraft.core.Holder;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.Mob;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -116,8 +117,11 @@ public final class ElbowStrikeHandler {
                                        float volume, float pitch) {
         if (level.getServer() == null) return;
 
+        // 1.20.1 需要 Holder<SoundEvent>，这里用 Holder.direct 包装
+        Holder<SoundEvent> holder = Holder.direct(ModSounds.ELBOW_STRIKE.get());
+
         ClientboundSoundPacket packet = new ClientboundSoundPacket(
-                ModSounds.ELBOW_STRIKE.get(),
+                holder,
                 SoundSource.PLAYERS,
                 x, y, z,
                 volume, pitch,
