@@ -3,6 +3,7 @@ package com.example.elbowstrike;
 import com.example.elbowstrike.network.NetworkHandler;
 import com.example.elbowstrike.network.SpinStartPacket;
 import net.minecraft.core.Holder;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.server.level.ServerPlayer;
@@ -24,14 +25,9 @@ import java.util.UUID;
 
 public final class ElbowStrikeHandler {
 
-    /** 肘击判定距离 */
     public static final double RANGE = 3.0D;
-    /** 前方锥形判定，0.5 ≈ 60° */
     public static final double CONE = 0.5D;
-
-    /** 水平击退力度 */
     public static final double KNOCKBACK_HORIZONTAL = 1.8D;
-    /** 垂直击退力度（让它离地） */
     public static final double KNOCKBACK_VERTICAL = 0.45D;
 
     public static final float DAMAGE = 3.0F;
@@ -51,12 +47,10 @@ public final class ElbowStrikeHandler {
         if (last != null && now - last < COOLDOWN_TICKS) return;
         COOLDOWNS.put(player.getUUID(), now);
 
-        // 挥手动画
         player.swing(InteractionHand.MAIN_HAND, true);
 
         LivingEntity target = findTarget(player);
         if (target == null) {
-            // 空挥也播放音效（音量小一点）
             broadcastSound(level, player.getX(), player.getY(), player.getZ(), 0.6F, 1.2F);
             return;
         }
@@ -77,7 +71,7 @@ public final class ElbowStrikeHandler {
         }
         dir = dir.normalize();
 
-        // ---- 强制击退：直接覆写速度，无视击退抗性 ----
+        // ---- 强制击退：直接覆写速度 ----
         target.setDeltaMovement(
                 dir.x * KNOCKBACK_HORIZONTAL,
                 KNOCKBACK_VERTICAL,
@@ -92,33 +86,32 @@ public final class ElbowStrikeHandler {
 
         // ---- 旋转 ----
         if (target instanceof ServerPlayer serverPlayer) {
-            // 玩家：客户端权威，发 S2C 包让它的客户端自己转
             NetworkHandler.CHANNEL.sendTo(
                     new SpinStartPacket(SPIN_DURATION),
                     serverPlayer.connection.connection,
                     NetworkDirection.PLAY_TO_CLIENT
             );
         } else {
-            // 生物：服务端强制旋转（内部会自动禁用 AI 防止覆盖）
             SpinManager.startSpin(target, SPIN_DURATION);
         }
 
-        // ---- 音效：明确广播给所有附近玩家 ----
+        // ---- 音效 ----
         broadcastSound(level,
                 target.getX(), target.getY(), target.getZ(),
                 1.0F, 1.0F);
     }
 
     /**
-     * 用原版音效包把声音明确广播给附近的所有玩家。
-     * 比 level.playSound(null, ...) 更可靠，避免某些情况下静默失败。
+     * 用原版音效包广播给附近玩家。
+     * 关键：用 BuiltInRegistries.SOUND_EVENT.wrapAsHolder 生成带 registry key 的 Holder，
+     * 否则 Holder.direct 在网络上无法解码。
      */
     private static void broadcastSound(Level level, double x, double y, double z,
                                        float volume, float pitch) {
         if (level.getServer() == null) return;
 
-        // 1.20.1 需要 Holder<SoundEvent>，这里用 Holder.direct 包装
-        Holder<SoundEvent> holder = Holder.direct(ModSounds.ELBOW_STRIKE.get());
+        Holder<SoundEvent> holder = BuiltInRegistries.SOUND_EVENT
+                .wrapAsHolder(ModSounds.ELBOW_STRIKE.get());
 
         ClientboundSoundPacket packet = new ClientboundSoundPacket(
                 holder,
@@ -129,14 +122,12 @@ public final class ElbowStrikeHandler {
         );
 
         level.getServer().getPlayerList().getPlayers().forEach(p -> {
-            // 只发给 64 格以内的玩家
             if (p.distanceToSqr(x, y, z) < 64.0D * 64.0D) {
                 p.connection.send(packet);
             }
         });
     }
 
-    /** 在玩家前方锥形范围内寻找最近的活体目标 */
     private static LivingEntity findTarget(ServerPlayer player) {
         Level level = player.level();
         Vec3 eye = player.getEyePosition();
@@ -154,7 +145,6 @@ public final class ElbowStrikeHandler {
 
         for (Entity e : candidates) {
             LivingEntity living = (LivingEntity) e;
-
             Vec3 center = living.position().add(0.0D, living.getBbHeight() * 0.5D, 0.0D);
             Vec3 to = center.subtract(eye);
             double dist = to.length();
