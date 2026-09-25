@@ -1,27 +1,38 @@
 package com.example.elbowstrike;
 
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraftforge.event.entity.living.LivingEvent;
+import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.server.ServerLifecycleHooks;
 
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.UUID;
 
 /**
  * 管理「被肘飞后在空中旋转」的逻辑（仅普通生物）。
- * 关键：LivingTickEvent 在 LivingEntity.tick() 的最末尾触发（aiStep 之后），
- * 所以在这里覆写 yRot/yHeadRot/yBodyRot 不会被 AI 覆盖。
+ *
+ * 关键：用 ServerTickEvent END 而不是 LivingTickEvent。
+ * 因为 Mob.tick() 在 super.tick()（LivingTickEvent 触发点）之后
+ * 还会调用 serverAiStep() -> LookControl.tick() 重设 yHeadRot，
+ * 会覆盖我们在 LivingTickEvent 里做的旋转。
+ *
+ * ServerTickEvent END 在所有实体 tick 完毕后触发，
+ * 此时 AI 已执行完，我们改完的旋转不会再被覆盖。
  */
 @Mod.EventBusSubscriber(modid = ElbowStrikeMod.MODID)
 public final class SpinManager {
 
     /** 每 tick 旋转的角度（度） */
-    private static final float SPIN_SPEED = 45.0F;
+    private static final float SPIN_SPEED = 60.0F;
     /** 默认持续时间（tick） */
-    private static final int DEFAULT_DURATION = 60;
+    private static final int DEFAULT_DURATION = 120;
 
     /** 剩余旋转 tick 数 */
     private static final Map<UUID, Integer> TICKS_LEFT = new HashMap<>();
@@ -34,40 +45,63 @@ public final class SpinManager {
 
     public static void startSpin(LivingEntity entity, int duration) {
         if (entity.level().isClientSide()) return;
+        // 玩家由客户端权威，走 ClientSpinHandler
+        if (entity instanceof ServerPlayer) return;
         TICKS_LEFT.put(entity.getUUID(), duration);
     }
 
     @SubscribeEvent
-    public static void onLivingTick(LivingEvent.LivingTickEvent event) {
+    public static void onServerTick(TickEvent.ServerTickEvent event) {
+        if (event.phase != TickEvent.Phase.END) return;
         if (TICKS_LEFT.isEmpty()) return;
 
-        LivingEntity entity = event.getEntity();
-        if (entity.level().isClientSide()) return;
+        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        if (server == null) return;
 
-        // 玩家由客户端权威，跳过
-        if (entity instanceof ServerPlayer) return;
+        Iterator<Map.Entry<UUID, Integer>> it = TICKS_LEFT.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<UUID, Integer> entry = it.next();
+            int left = entry.getValue();
 
-        Integer left = TICKS_LEFT.get(entity.getUUID());
-        if (left == null) return;
+            if (left <= 0) {
+                it.remove();
+                continue;
+            }
 
-        if (left <= 0 || !entity.isAlive()) {
-            TICKS_LEFT.remove(entity.getUUID());
-            return;
+            LivingEntity living = findEntity(server, entry.getKey());
+            if (living == null) {
+                it.remove();
+                continue;
+            }
+
+            entry.setValue(left - 1);
+
+            // 只有离地时才旋转
+            if (living.onGround()) continue;
+
+            float newYaw = living.getYRot() + SPIN_SPEED;
+
+            living.setYRot(newYaw);
+            living.setYHeadRot(newYaw);
+            living.yBodyRot = newYaw;
+
+            // 同步旧值，让客户端插值方向正确
+            living.yRotO = newYaw - SPIN_SPEED;
+            living.yHeadRotO = newYaw - SPIN_SPEED;
+            living.yBodyRotO = newYaw - SPIN_SPEED;
         }
-        TICKS_LEFT.put(entity.getUUID(), left - 1);
+    }
 
-        // 只在离地时强制旋转
-        if (entity.onGround()) return;
-
-        float yaw = entity.getYRot() + SPIN_SPEED;
-
-        entity.setYRot(yaw);
-        entity.setYHeadRot(yaw);
-        entity.yBodyRot = yaw;
-
-        // 关键：同步旧值，否则客户端插值方向会被 AI 上一 tick 的值拉回去
-        entity.yRotO = yaw - SPIN_SPEED;
-        entity.yHeadRotO = yaw - SPIN_SPEED;
-        entity.yBodyRotO = yaw - SPIN_SPEED;
+    /** 在所有维度里查找指定 UUID 的生物 */
+    private static LivingEntity findEntity(MinecraftServer server, UUID uuid) {
+        for (ServerLevel level : server.getAllLevels()) {
+            Entity e = level.getEntity(uuid);
+            if (e instanceof LivingEntity living
+                    && living.isAlive()
+                    && !(living instanceof ServerPlayer)) {
+                return living;
+            }
+        }
+        return null;
     }
 }
