@@ -264,9 +264,9 @@ public final class ElbowStrikeConfig {
                             "含义：肘击后多久之内被攻击可以触发招架。",
                             "参考：10 = 0.5 秒（默认）；20 = 1 秒。",
                             "取值范围：0 ~ 100",
-                            "默认值：10"
+                            "默认值：3"
                     )
-                    .defineInRange("parryWindowTicks", 10, 0, 100);
+                    .defineInRange("parryWindowTicks", 3, 0, 100);
 
             parryCounterSpin = b
                     .comment(
