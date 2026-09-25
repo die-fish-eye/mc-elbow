@@ -1,8 +1,9 @@
 package com.example.elbowstrike;
 
+import com.example.elbowstrike.network.NetworkHandler;
+import com.example.elbowstrike.network.SpinStartPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.damagesource.DamageSource;
@@ -11,6 +12,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraftforge.network.NetworkDirection;
 
 import java.util.HashMap;
 import java.util.List;
@@ -51,8 +53,12 @@ public final class ElbowStrikeHandler {
 
         LivingEntity target = findTarget(player);
         if (target == null) {
-            level.playSound(null, player.getX(), player.getY(), player.getZ(),
-                    SoundEvents.PLAYER_ATTACK_SWEEP, SoundSource.PLAYERS, 0.5F, 1.6F);
+            // 空挥也播放音效
+            level.playSound(null,
+                    player.getX(), player.getY(), player.getZ(),
+                    ModSounds.ELBOW_STRIKE.get(),
+                    SoundSource.PLAYERS,
+                    0.6F, 1.2F);
             return;
         }
 
@@ -61,7 +67,7 @@ public final class ElbowStrikeHandler {
         DamageSource source = level.damageSources().playerAttack(player);
         target.hurt(source, DAMAGE);
 
-        // ---- 计算击退方向（仅水平，避免把目标砸进地里）----
+        // ---- 计算击退方向（仅水平）----
         Vec3 dir = new Vec3(target.getX() - player.getX(), 0.0D, target.getZ() - player.getZ());
         if (dir.lengthSqr() < 1.0E-4D) {
             Vec3 look = player.getLookAngle();
@@ -86,11 +92,25 @@ public final class ElbowStrikeHandler {
             serverPlayer.connection.send(new ClientboundSetEntityMotionPacket(serverPlayer));
         }
 
-        // ---- 注册旋转（在空中时会持续自转）----
-        SpinManager.startSpin(target, SPIN_DURATION);
+        // ---- 旋转 ----
+        if (target instanceof ServerPlayer serverPlayer) {
+            // 玩家：客户端权威，发 S2C 包让它的客户端自己转
+            NetworkHandler.CHANNEL.sendTo(
+                    new SpinStartPacket(SPIN_DURATION),
+                    serverPlayer.connection.connection,
+                    NetworkDirection.PLAY_TO_CLIENT
+            );
+        } else {
+            // 普通生物：服务端直接强制旋转
+            SpinManager.startSpin(target, SPIN_DURATION);
+        }
 
-        level.playSound(null, target.getX(), target.getY(), target.getZ(),
-                SoundEvents.PLAYER_ATTACK_CRIT, SoundSource.PLAYERS, 1.0F, 0.7F);
+        // ---- 音效 ----
+        level.playSound(null,
+                target.getX(), target.getY(), target.getZ(),
+                ModSounds.ELBOW_STRIKE.get(),
+                SoundSource.PLAYERS,
+                1.0F, 1.0F);
     }
 
     /** 在玩家前方锥形范围内寻找最近的活体目标 */

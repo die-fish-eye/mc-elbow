@@ -1,23 +1,20 @@
 package com.example.elbowstrike;
 
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.Entity;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.Level;
-import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.event.entity.living.LivingEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.server.ServerLifecycleHooks;
 
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * 管理「被肘飞后在空中旋转」的逻辑。
+ * 管理「被肘飞后在空中旋转」的逻辑（仅普通生物，玩家由客户端处理）。
+ * 使用 LivingTickEvent，确保在 AI 覆盖朝向之后、发包之前修改 yRot。
  */
 @Mod.EventBusSubscriber(modid = ElbowStrikeMod.MODID)
 public final class SpinManager {
@@ -51,42 +48,44 @@ public final class SpinManager {
     }
 
     @SubscribeEvent
-    public static void onServerTick(TickEvent.ServerTickEvent event) {
-        if (event.phase != TickEvent.Phase.END || SPINNING.isEmpty()) return;
+    public static void onLivingTick(LivingEvent.LivingTickEvent event) {
+        if (SPINNING.isEmpty()) return;
 
-        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
-        if (server == null) return;
+        LivingEntity entity = event.getEntity();
+        if (entity.level().isClientSide()) return;
 
-        Iterator<Map.Entry<UUID, SpinData>> it = SPINNING.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry<UUID, SpinData> entry = it.next();
-            SpinData data = entry.getValue();
-
-            if (data.ticksLeft <= 0) {
-                it.remove();
-                continue;
-            }
-            data.ticksLeft--;
-
-            ServerLevel level = server.getLevel(data.dimension);
-            if (level == null) {
-                it.remove();
-                continue;
-            }
-
-            Entity entity = level.getEntity(entry.getKey());
-            if (!(entity instanceof LivingEntity living) || !living.isAlive()) {
-                it.remove();
-                continue;
-            }
-
-            // 核心条件：不在地面上（被肘飞到空中）才旋转
-            if (living.onGround()) continue;
-
-            float yaw = living.getYRot() + SPIN_SPEED;
-            living.setYRot(yaw);
-            living.setYHeadRot(yaw);
-            living.yBodyRot = yaw;
+        // 玩家由客户端权威控制，旋转由 ClientSpinHandler 处理，这里跳过
+        if (entity instanceof ServerPlayer) {
+            SPINNING.remove(entity.getUUID());
+            return;
         }
+
+        SpinData data = SPINNING.get(entity.getUUID());
+        if (data == null) return;
+
+        // 清理无效状态
+        if (!entity.isAlive() || !entity.level().dimension().equals(data.dimension)) {
+            SPINNING.remove(entity.getUUID());
+            return;
+        }
+
+        if (data.ticksLeft <= 0) {
+            SPINNING.remove(entity.getUUID());
+            return;
+        }
+        data.ticksLeft--;
+
+        // 核心条件：只有离地（被肘飞）时才强制旋转
+        if (entity.onGround()) return;
+
+        float yaw = entity.getYRot() + SPIN_SPEED;
+
+        entity.setYRot(yaw);
+        entity.setYHeadRot(yaw);
+        entity.yBodyRot = yaw;
+
+        entity.yRotO = yaw - SPIN_SPEED;
+        entity.yHeadRotO = yaw - SPIN_SPEED;
+        entity.yBodyRotO = yaw - SPIN_SPEED;
     }
 }

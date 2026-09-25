@@ -21,8 +21,12 @@ public final class ClientEvents {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
 
+        // 按键 -> 发包
         while (KeyBindings.ELBOW_STRIKE.consumeClick()) {
             NetworkHandler.CHANNEL.sendToServer(new ElbowStrikePacket());
         }
+
+        // 玩家空中旋转
+        ClientSpinHandler.tick();
     }
 }

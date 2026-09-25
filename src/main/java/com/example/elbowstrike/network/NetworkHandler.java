@@ -21,10 +21,19 @@ public final class NetworkHandler {
 
     public static void register() {
         int id = 0;
+
+        // C2S：请求肘击
         CHANNEL.messageBuilder(ElbowStrikePacket.class, id++, NetworkDirection.PLAY_TO_SERVER)
                 .encoder(ElbowStrikePacket::encode)
                 .decoder(ElbowStrikePacket::new)
                 .consumerMainThread(ElbowStrikePacket::handle)
+                .add();
+
+        // S2C：通知玩家开始旋转
+        CHANNEL.messageBuilder(SpinStartPacket.class, id++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(SpinStartPacket::encode)
+                .decoder(SpinStartPacket::new)
+                .consumerMainThread(SpinStartPacket::handle)
                 .add();
     }
 }
