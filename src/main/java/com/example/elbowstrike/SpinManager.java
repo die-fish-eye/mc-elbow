@@ -17,19 +17,8 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.UUID;
 
-/**
- * 强制旋转被肘击的生物。
- *
- * 关键点：
- * 1. 用 ServerTickEvent END，在所有实体 tick 完之后执行（AI 已经跑完了）
- * 2. 自己维护累积角度 currentYaw，不依赖 living.getYRot()，避免 AI 覆盖
- * 3. 用 ClientboundMoveEntityPacket.PosRot 同步位置+旋转，避免贴图卡在原位
- */
 @Mod.EventBusSubscriber(modid = ElbowStrikeMod.MODID)
 public final class SpinManager {
-
-    private static final float SPIN_SPEED = 32.0F;
-    private static final int DEFAULT_DURATION = 60;
 
     private static final class SpinData {
         int ticksLeft;
@@ -47,7 +36,7 @@ public final class SpinManager {
     private SpinManager() {}
 
     public static void startSpin(LivingEntity entity) {
-        startSpin(entity, DEFAULT_DURATION);
+        startSpin(entity, ElbowStrikeConfig.COMMON.spinDuration.get());
     }
 
     public static void startSpin(LivingEntity entity, int duration) {
@@ -63,6 +52,8 @@ public final class SpinManager {
 
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server == null) return;
+
+        float spinSpeed = ElbowStrikeConfig.COMMON.spinSpeed.get().floatValue();
 
         Iterator<Map.Entry<UUID, SpinData>> it = SPINNING.entrySet().iterator();
         while (it.hasNext()) {
@@ -89,29 +80,24 @@ public final class SpinManager {
                 data.initialized = true;
             }
 
-            data.currentYaw += SPIN_SPEED;
+            data.currentYaw += spinSpeed;
             float newYaw = data.currentYaw;
 
-            // 写入服务端实体状态
             living.setYRot(newYaw);
             living.setYHeadRot(newYaw);
             living.yBodyRot = newYaw;
-            living.yRotO = newYaw - SPIN_SPEED;
-            living.yHeadRotO = newYaw - SPIN_SPEED;
-            living.yBodyRotO = newYaw - SPIN_SPEED;
+            living.yRotO = newYaw - spinSpeed;
+            living.yHeadRotO = newYaw - spinSpeed;
+            living.yBodyRotO = newYaw - spinSpeed;
 
-            // 用 PosRot 包同步位置+旋转，避免贴图卡在原位
             byte yawByte = (byte) (newYaw * 256.0F / 360.0F);
             byte pitchByte = (byte) (living.getXRot() * 256.0F / 360.0F);
 
             ClientboundMoveEntityPacket.PosRot posRotPacket =
                     new ClientboundMoveEntityPacket.PosRot(
                             living.getId(),
-                            (short) 0,  // 位置增量设为0，让客户端自己插值
-                            (short) 0,
-                            (short) 0,
-                            yawByte,
-                            pitchByte,
+                            (short) 0, (short) 0, (short) 0,
+                            yawByte, pitchByte,
                             living.onGround()
                     );
 

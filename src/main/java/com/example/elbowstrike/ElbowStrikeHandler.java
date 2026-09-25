@@ -2,7 +2,9 @@ package com.example.elbowstrike;
 
 import com.example.elbowstrike.network.NetworkHandler;
 import com.example.elbowstrike.network.SpinStartPacket;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
@@ -22,21 +24,6 @@ import java.util.UUID;
 
 public final class ElbowStrikeHandler {
 
-    /** 肘击判定距离 */
-    public static final double RANGE = 4.0D;
-    /** 前方锥形判定，0.5 ≈ 60° */
-    public static final double CONE = 0.3D;
-
-    /** 水平击退力度 */
-    public static final double KNOCKBACK_HORIZONTAL = 1.8D;
-    /** 垂直击退力度（让它离地） */
-    public static final double KNOCKBACK_VERTICAL = 1.0D;
-
-    public static final float DAMAGE = 3.0F;
-    /** 冷却：5 tick ≈ 0.25 秒 */
-    public static final int COOLDOWN_TICKS = 5;
-    public static final int SPIN_DURATION = 60;
-
     private static final Map<UUID, Long> COOLDOWNS = new HashMap<>();
 
     private ElbowStrikeHandler() {}
@@ -45,16 +32,15 @@ public final class ElbowStrikeHandler {
         Level level = player.level();
         long now = level.getGameTime();
 
-        // 冷却
+        // 冷却（从 config 读）
+        int cooldown = ElbowStrikeConfig.COMMON.cooldownTicks.get();
         Long last = COOLDOWNS.get(player.getUUID());
-        if (last != null && now - last < COOLDOWN_TICKS) return;
+        if (last != null && now - last < cooldown) return;
         COOLDOWNS.put(player.getUUID(), now);
 
         player.swing(InteractionHand.MAIN_HAND, true);
 
-        // ---- 找到前方所有目标 ----
         List<LivingEntity> targets = findTargets(player);
-
         if (targets.isEmpty()) {
             level.playSound(null,
                     player.getX(), player.getY(), player.getZ(),
@@ -64,15 +50,27 @@ public final class ElbowStrikeHandler {
             return;
         }
 
+        var cfg = ElbowStrikeConfig.COMMON;
+        float baseDamage = cfg.damage.get().floatValue();
+        double hKnock = cfg.knockbackHorizontal.get();
+        double vKnock = cfg.knockbackVertical.get();
+        int spinDuration = cfg.spinDuration.get();
+
         DamageSource source = level.damageSources().playerAttack(player);
+        boolean anyCritical = false;
 
-        // ---- 对每个目标施加伤害、击退、旋转 ----
         for (LivingEntity target : targets) {
-            // 伤害
-            target.invulnerableTime = 0;
-            target.hurt(source, DAMAGE);
+            boolean critical = cfg.enableCrit.get() && isCritical(player, target);
+            if (critical) anyCritical = true;
 
-            // 计算击退方向（仅水平）
+            // ---- 伤害 ----
+            target.invulnerableTime = 0;
+            float damage = critical
+                    ? baseDamage * cfg.critDamageMult.get().floatValue()
+                    : baseDamage;
+            target.hurt(source, damage);
+
+            // ---- 击退方向 ----
             Vec3 dir = new Vec3(target.getX() - player.getX(), 0.0D, target.getZ() - player.getZ());
             if (dir.lengthSqr() < 1.0E-4D) {
                 Vec3 look = player.getLookAngle();
@@ -83,46 +81,68 @@ public final class ElbowStrikeHandler {
             }
             dir = dir.normalize();
 
-            // 强制击退
-            target.setDeltaMovement(
-                    dir.x * KNOCKBACK_HORIZONTAL,
-                    KNOCKBACK_VERTICAL,
-                    dir.z * KNOCKBACK_HORIZONTAL
-            );
+            double hPower = critical ? hKnock * cfg.critKnockbackHorizontalMult.get() : hKnock;
+            double vPower = critical ? vKnock * cfg.critKnockbackVerticalMult.get() : vKnock;
+
+            target.setDeltaMovement(dir.x * hPower, vPower, dir.z * hPower);
             target.hasImpulse = true;
             target.hurtMarked = true;
 
             if (target instanceof ServerPlayer serverPlayer) {
                 serverPlayer.connection.send(new ClientboundSetEntityMotionPacket(serverPlayer));
-                // 玩家：客户端权威，发 S2C 包让它自己旋转
                 NetworkHandler.CHANNEL.sendTo(
-                        new SpinStartPacket(SPIN_DURATION),
+                        new SpinStartPacket(spinDuration),
                         serverPlayer.connection.connection,
                         NetworkDirection.PLAY_TO_CLIENT
                 );
             } else {
-                // 生物：服务端强制旋转
-                SpinManager.startSpin(target, SPIN_DURATION);
+                SpinManager.startSpin(target, spinDuration);
+            }
+
+            // ---- 暴击粒子 ----
+            if (critical && level instanceof ServerLevel serverLevel) {
+                serverLevel.sendParticles(
+                        ParticleTypes.CRIT,
+                        target.getX(),
+                        target.getY() + target.getBbHeight() * 0.5D,
+                        target.getZ(),
+                        15, 0.3D, 0.3D, 0.3D, 0.15D
+                );
             }
         }
 
-        // ---- 音效（只播一次） ----
+        // ---- 音效 ----
+        float pitch = anyCritical ? cfg.critPitch.get().floatValue() : 1.0F;
         level.playSound(null,
                 player.getX(), player.getY() + 1.0D, player.getZ(),
                 ModSounds.ELBOW_STRIKE.get(),
                 SoundSource.PLAYERS,
-                1.0F, 1.0F);
+                1.0F, pitch);
     }
 
-    /** 在玩家前方锥形范围内找出所有活体目标 */
+    private static boolean isCritical(ServerPlayer player, LivingEntity target) {
+        boolean fallingAttack = player.fallDistance > 0.0F
+                && !player.onGround()
+                && !player.onClimbable()
+                && !player.isInWater()
+                && !player.isPassenger();
+
+        boolean airTarget = !target.onGround();
+
+        return fallingAttack || airTarget;
+    }
+
     private static List<LivingEntity> findTargets(ServerPlayer player) {
         Level level = player.level();
         Vec3 eye = player.getEyePosition();
         Vec3 look = player.getLookAngle().normalize();
 
+        double range = ElbowStrikeConfig.COMMON.range.get();
+        double cone = ElbowStrikeConfig.COMMON.cone.get();
+
         AABB box = player.getBoundingBox()
-                .inflate(RANGE + 1.0D)
-                .expandTowards(look.scale(RANGE));
+                .inflate(range + 1.0D)
+                .expandTowards(look.scale(range));
 
         List<Entity> candidates = level.getEntities(player, box,
                 e -> e instanceof LivingEntity living && living.isAlive() && living.isPickable());
@@ -131,14 +151,13 @@ public final class ElbowStrikeHandler {
 
         for (Entity e : candidates) {
             LivingEntity living = (LivingEntity) e;
-
             Vec3 center = living.position().add(0.0D, living.getBbHeight() * 0.5D, 0.0D);
             Vec3 to = center.subtract(eye);
             double dist = to.length();
 
-            if (dist > RANGE + living.getBbWidth() * 0.5D) continue;
+            if (dist > range + living.getBbWidth() * 0.5D) continue;
             if (dist < 1.0E-4D) continue;
-            if (to.normalize().dot(look) < CONE) continue;
+            if (to.normalize().dot(look) < cone) continue;
 
             result.add(living);
         }

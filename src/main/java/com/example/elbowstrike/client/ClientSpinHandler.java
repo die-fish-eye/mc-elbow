@@ -1,15 +1,10 @@
 package com.example.elbowstrike.client;
 
+import com.example.elbowstrike.ElbowStrikeConfig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 
-/**
- * 客户端侧的玩家旋转控制。
- * 玩家朝向由客户端权威，因此必须在本地强制覆写。
- */
 public final class ClientSpinHandler {
-
-    private static final float SPIN_SPEED = 32.0F;
 
     private static int ticksLeft = 0;
 
@@ -19,7 +14,6 @@ public final class ClientSpinHandler {
         ticksLeft = duration;
     }
 
-    /** 在 ClientTickEvent 每帧调用 */
     public static void tick() {
         if (ticksLeft <= 0) return;
 
@@ -32,18 +26,17 @@ public final class ClientSpinHandler {
 
         ticksLeft--;
 
-        // 与生物一样：离地才旋转
         if (player.onGround()) return;
 
-        float yaw = player.getYRot() + SPIN_SPEED;
+        float spinSpeed = ElbowStrikeConfig.COMMON.spinSpeed.get().floatValue();
+        float yaw = player.getYRot() + spinSpeed;
 
         player.setYRot(yaw);
         player.setYHeadRot(yaw);
         player.yBodyRot = yaw;
 
-        // 让插值也往同一方向走，避免视觉上被拉回
-        player.yRotO = yaw - SPIN_SPEED;
-        player.yHeadRotO = yaw - SPIN_SPEED;
-        player.yBodyRotO = yaw - SPIN_SPEED;
+        player.yRotO = yaw - spinSpeed;
+        player.yHeadRotO = yaw - spinSpeed;
+        player.yBodyRotO = yaw - spinSpeed;
     }
 }
