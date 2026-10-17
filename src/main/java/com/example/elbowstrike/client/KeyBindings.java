@@ -16,27 +16,22 @@ public final class KeyBindings {
 
     public static final String CATEGORY = "key.categories.elbowstrike";
 
-    public static final KeyMapping ELBOW_STRIKE = new KeyMapping(
-            "key.elbowstrike.strike",
+    /**
+     * 肘击模式键。
+     * <p>
+     * 按住此键时：
+     * <ul>
+     *     <li>左键 → 肘击</li>
+     *     <li>右键 → 万象天引</li>
+     *     <li>中键 → 雷霆形态</li>
+     * </ul>
+     * 原版的攻击/使用物品/选取方块动作会被吞掉，不会破坏方块或使用手持物品。
+     */
+    public static final KeyMapping ELBOW_MODE = new KeyMapping(
+            "key.elbowstrike.mode",
             KeyConflictContext.IN_GAME,
             InputConstants.Type.KEYSYM,
-            GLFW.GLFW_KEY_M,
-            CATEGORY
-    );
-
-    public static final KeyMapping THUNDER_FORM = new KeyMapping(
-            "key.elbowstrike.thunder_form",
-            KeyConflictContext.IN_GAME,
-            InputConstants.Type.KEYSYM,
-            GLFW.GLFW_KEY_K,
-            CATEGORY
-    );
-
-    public static final KeyMapping UNIVERSAL_PULL = new KeyMapping(
-            "key.elbowstrike.universal_pull",
-            KeyConflictContext.IN_GAME,
-            InputConstants.Type.KEYSYM,
-            GLFW.GLFW_KEY_X,
+            GLFW.GLFW_KEY_V,
             CATEGORY
     );
 
@@ -44,8 +39,6 @@ public final class KeyBindings {
 
     @SubscribeEvent
     public static void onRegisterKeys(RegisterKeyMappingsEvent event) {
-        event.register(ELBOW_STRIKE);
-        event.register(THUNDER_FORM);
-        event.register(UNIVERSAL_PULL);
+        event.register(ELBOW_MODE);
     }
 }
