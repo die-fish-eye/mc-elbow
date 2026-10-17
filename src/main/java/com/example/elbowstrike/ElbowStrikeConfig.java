@@ -44,12 +44,12 @@ public final class ElbowStrikeConfig {
         public final ForgeConfigSpec.IntValue spinDuration;
         public final ForgeConfigSpec.DoubleValue spinSpeed;
 
-        // ---- 暴击 ----
-        public final ForgeConfigSpec.BooleanValue enableCrit;
-        public final ForgeConfigSpec.DoubleValue critDamageMult;
-        public final ForgeConfigSpec.DoubleValue critKnockbackHorizontalMult;
-        public final ForgeConfigSpec.DoubleValue critKnockbackVerticalMult;
-        public final ForgeConfigSpec.DoubleValue critPitch;
+        // ---- 暴击 ----（已移除：改为蓄力机制，见下方「蓄力」配置）
+
+        // ---- 蓄力 ----
+        public final ForgeConfigSpec.IntValue chargeMaxTicks;
+        public final ForgeConfigSpec.DoubleValue chargeDamageMult;
+        public final ForgeConfigSpec.DoubleValue chargeKnockbackMult;
 
         // ---- 招架 ----
         public final ForgeConfigSpec.BooleanValue enableParry;
@@ -183,35 +183,40 @@ public final class ElbowStrikeConfig {
             b.pop();
 
             // ============================================================
-            // 暴击
+            // 蓄力
             // ============================================================
             b.comment(
-                    "【暴击设置】",
-                    "暴击触发条件（任意一条即算）：",
-                    "  1. 下落攻击：玩家在空中下落时肘击。",
-                    "  2. 空中追击：被肘击的目标此时已经离地。",
-                    "暴击时会增加伤害与击退，并播放暴击粒子与高音调音效。"
-            ).push("crit");
+                    "【蓄力设置】",
+                    "按住肘击键（默认 V + 左键）开始蓄力，松开释放。",
+                    "蓄力时间越长，伤害与击退越高（线性插值，0 蓄力 = 基础值，满蓄力 = 倍率值）。"
+            ).push("charge");
 
-            enableCrit = b
-                    .comment("是否启用暴击判定，默认值：true")
-                    .define("enableCrit", true);
+            chargeMaxTicks = b
+                    .comment(
+                            "满蓄力所需时间（单位：tick，20 tick = 1 秒）",
+                            "按住达到此时长后即为满蓄力，继续按住不再增加。",
+                            "取值范围：10 ~ 200",
+                            "默认值：40（2 秒）"
+                    )
+                    .defineInRange("chargeMaxTicks", 40, 10, 200);
 
-            critDamageMult = b
-                    .comment("暴击伤害倍率（乘算），取值范围：1.0 ~ 10.0，默认值：1.5")
-                    .defineInRange("critDamageMult", 1.5D, 1.0D, 10.0D);
+            chargeDamageMult = b
+                    .comment(
+                            "满蓄力时的伤害倍率（乘算）",
+                            "0 蓄力 = 1.0×基础伤害；满蓄力 = 此值×基础伤害。",
+                            "取值范围：1.0 ~ 10.0",
+                            "默认值：3.0"
+                    )
+                    .defineInRange("chargeDamageMult", 3.0D, 1.0D, 10.0D);
 
-            critKnockbackHorizontalMult = b
-                    .comment("暴击水平击退倍率（乘算），取值范围：1.0 ~ 10.0，默认值：1.3")
-                    .defineInRange("critKnockbackHorizontalMult", 1.3D, 1.0D, 10.0D);
-
-            critKnockbackVerticalMult = b
-                    .comment("暴击垂直击退倍率（乘算），取值范围：1.0 ~ 10.0，默认值：1.4")
-                    .defineInRange("critKnockbackVerticalMult", 1.4D, 1.0D, 10.0D);
-
-            critPitch = b
-                    .comment("暴击音效音调，取值范围：0.5 ~ 2.0，默认值：1.4")
-                    .defineInRange("critPitch", 1.4D, 0.5D, 2.0D);
+            chargeKnockbackMult = b
+                    .comment(
+                            "满蓄力时的击退倍率（乘算，水平与垂直均生效）",
+                            "0 蓄力 = 1.0×基础击退；满蓄力 = 此值×基础击退。",
+                            "取值范围：1.0 ~ 5.0",
+                            "默认值：2.0"
+                    )
+                    .defineInRange("chargeKnockbackMult", 2.0D, 1.0D, 5.0D);
 
             b.pop();
 

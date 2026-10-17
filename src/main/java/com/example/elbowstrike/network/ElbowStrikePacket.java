@@ -7,19 +7,28 @@ import net.minecraftforge.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
+/** C2S：请求肘击，携带客户端蓄力 tick 数 */
 public class ElbowStrikePacket {
 
-    public ElbowStrikePacket() {}
+    private final int chargeTicks;
 
-    public ElbowStrikePacket(FriendlyByteBuf buf) {}
+    public ElbowStrikePacket(int chargeTicks) {
+        this.chargeTicks = chargeTicks;
+    }
 
-    public void encode(FriendlyByteBuf buf) {}
+    public ElbowStrikePacket(FriendlyByteBuf buf) {
+        this.chargeTicks = buf.readVarInt();
+    }
+
+    public void encode(FriendlyByteBuf buf) {
+        buf.writeVarInt(chargeTicks);
+    }
 
     public void handle(Supplier<NetworkEvent.Context> ctx) {
         NetworkEvent.Context context = ctx.get();
         ServerPlayer player = context.getSender();
         if (player != null) {
-            ElbowStrikeHandler.strike(player);
+            ElbowStrikeHandler.strike(player, chargeTicks);
         }
         context.setPacketHandled(true);
     }

@@ -2,9 +2,7 @@ package com.example.elbowstrike;
 
 import com.example.elbowstrike.network.NetworkHandler;
 import com.example.elbowstrike.network.SpinStartPacket;
-import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
@@ -36,7 +34,13 @@ public final class ElbowStrikeHandler {
 
     private ElbowStrikeHandler() {}
 
-    public static void strike(ServerPlayer player) {
+    /**
+     * 释放肘击。
+     *
+     * @param player     施法玩家
+     * @param chargeTicks 客户端蓄力 tick 数（0 = 瞬发，满值由 chargeMaxTicks 决定）
+     */
+    public static void strike(ServerPlayer player, int chargeTicks) {
         Level level = player.level();
         long now = level.getGameTime();
 
@@ -67,35 +71,26 @@ public final class ElbowStrikeHandler {
         double vKnock = cfg.knockbackVertical.get();
         int spinDuration = cfg.spinDuration.get();
 
+        // ---- 蓄力缩放（线性插值：0 蓄力 = 基础值，满蓄力 = 倍率值） ----
+        int maxCharge = cfg.chargeMaxTicks.get();
+        float chargeRatio = maxCharge > 0
+                ? Math.min((float) Math.max(chargeTicks, 0) / maxCharge, 1.0F)
+                : 0.0F;
+        float damageMult = 1.0F + (cfg.chargeDamageMult.get().floatValue() - 1.0F) * chargeRatio;
+        double knockMult = 1.0 + (cfg.chargeKnockbackMult.get() - 1.0) * chargeRatio;
+
+        float damage = baseDamage * damageMult;
+        double hPower = hKnock * knockMult;
+        double vPower = vKnock * knockMult;
+
         DamageSource source = level.damageSources().playerAttack(player);
-        boolean anyCritical = false;
 
         for (LivingEntity target : targets) {
-            boolean critical = cfg.enableCrit.get() && isCritical(player, target);
-            if (critical) anyCritical = true;
-
-            float damage = critical
-                    ? baseDamage * cfg.critDamageMult.get().floatValue()
-                    : baseDamage;
-            double hPower = critical ? hKnock * cfg.critKnockbackHorizontalMult.get() : hKnock;
-            double vPower = critical ? vKnock * cfg.critKnockbackVerticalMult.get() : vKnock;
-
             applyHit(player, target, source, damage, hPower, vPower, spinDuration, true);
-
-            // ---- 暴击粒子 ----
-            if (critical && level instanceof ServerLevel serverLevel) {
-                serverLevel.sendParticles(
-                        ParticleTypes.CRIT,
-                        target.getX(),
-                        target.getY() + target.getBbHeight() * 0.5D,
-                        target.getZ(),
-                        15, 0.3D, 0.3D, 0.3D, 0.15D
-                );
-            }
         }
 
-        // ---- 音效 ----
-        float pitch = anyCritical ? cfg.critPitch.get().floatValue() : 1.0F;
+        // ---- 音效（音调随蓄力升高，给玩家反馈） ----
+        float pitch = 1.0F + chargeRatio * 0.4F;
         level.playSound(null,
                 player.getX(), player.getY() + 1.0D, player.getZ(),
                 ModSounds.ELBOW_STRIKE.get(),
@@ -139,18 +134,6 @@ public final class ElbowStrikeHandler {
                 SoundSource.PLAYERS,
                 1.0F, 1.2F
         );
-    }
-
-    private static boolean isCritical(ServerPlayer player, LivingEntity target) {
-        boolean fallingAttack = player.fallDistance > 0.0F
-                && !player.onGround()
-                && !player.onClimbable()
-                && !player.isInWater()
-                && !player.isPassenger();
-
-        boolean airTarget = !target.onGround();
-
-        return fallingAttack || airTarget;
     }
 
     private static List<LivingEntity> findTargets(ServerPlayer player) {

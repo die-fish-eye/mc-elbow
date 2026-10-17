@@ -19,13 +19,9 @@ public final class ClientEvents {
     private ClientEvents() {}
 
     /**
-     * 拦截左键 / 右键。
+     * 拦截右键（使用物品）：按住 V 时 → 万象天引，吞掉原版使用。
      * <p>
-     * 按住 {@link KeyBindings#ELBOW_MODE} 时：
-     * <ul>
-     *     <li>左键（攻击）→ 肘击，并吞掉原版攻击</li>
-     *     <li>右键（使用物品）→ 万象天引，并吞掉原版使用</li>
-     * </ul>
+     * 左键不再走这里，改由 {@link #onMouseButtonPre} 处理蓄力按下/松开。
      */
     @SubscribeEvent
     public static void onInteractionKey(InputEvent.InteractionKeyMappingTriggered event) {
@@ -33,36 +29,58 @@ public final class ClientEvents {
         if (mc.player == null || mc.level == null) return;
         if (!KeyBindings.ELBOW_MODE.isDown()) return;
 
-        if (event.isAttack()) {
-            event.setCanceled(true);
-            NetworkHandler.CHANNEL.sendToServer(new ElbowStrikePacket());
-        } else if (event.isUseItem()) {
+        if (event.isUseItem()) {
             event.setCanceled(true);
             NetworkHandler.CHANNEL.sendToServer(new UniversalPullPacket());
         }
     }
 
     /**
-     * 拦截鼠标按键，处理中键。
-     * <p>
-     * 按住 {@link KeyBindings#ELBOW_MODE} 时：中键按下 → 雷霆形态，并吞掉原版选取方块。
+     * 拦截鼠标按键：
+     * <ul>
+     *     <li>左键按下 → 开始蓄力；左键松开 → 释放肘击（携带蓄力值）</li>
+     *     <li>中键按下 → 雷霆形态</li>
+     * </ul>
+     * 均需按住 V 才生效，并吞掉原版对应动作。
      */
     @SubscribeEvent
     public static void onMouseButtonPre(InputEvent.MouseButton.Pre event) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
-        if (!KeyBindings.ELBOW_MODE.isDown()) return;
 
-        if (event.getButton() == GLFW.GLFW_MOUSE_BUTTON_MIDDLE
-                && event.getAction() == GLFW.GLFW_PRESS) {
+        boolean modeHeld = KeyBindings.ELBOW_MODE.isDown();
+
+        if (event.getButton() == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
+            if (!modeHeld) return;
             event.setCanceled(true);
-            NetworkHandler.CHANNEL.sendToServer(new ActivateThunderPacket());
+            if (event.getAction() == GLFW.GLFW_PRESS) {
+                ClientChargeHandler.startCharge();
+            } else if (event.getAction() == GLFW.GLFW_RELEASE) {
+                if (ClientChargeHandler.isCharging()) {
+                    int chargeTicks = ClientChargeHandler.consumeChargeTicks();
+                    NetworkHandler.CHANNEL.sendToServer(new ElbowStrikePacket(chargeTicks));
+                }
+            }
+        } else if (event.getButton() == GLFW.GLFW_MOUSE_BUTTON_MIDDLE) {
+            if (!modeHeld) return;
+            if (event.getAction() == GLFW.GLFW_PRESS) {
+                event.setCanceled(true);
+                NetworkHandler.CHANNEL.sendToServer(new ActivateThunderPacket());
+            }
         }
     }
 
     @SubscribeEvent
     public static void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
+
+        // 若蓄力中但 V 已松开 / 玩家已离开世界，取消蓄力（不释放肘击）
+        if (ClientChargeHandler.isCharging()) {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.player == null || !KeyBindings.ELBOW_MODE.isDown()) {
+                ClientChargeHandler.cancelCharge();
+            }
+        }
 
         // 玩家空中旋转
         ClientSpinHandler.tick();
