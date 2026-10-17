@@ -1,6 +1,4 @@
 {
-  "key.categories.elbowstrike": "肘击",
-  "key.elbowstrike.strike": "肘击",
-  "key.elbowstrike.thunder_form": "雷霆形态",
-  "key.elbowstrike.universal_pull": "万象天引"
+  "key.categories.elbowstrike": "肘击模组",
+  "key.elbowstrike.mode": "肘击模式（按住后左键肘击/右键天引/中键雷霆）"
 }
