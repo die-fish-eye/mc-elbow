@@ -16,31 +16,31 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * ÕĞ¼Ü¹ÜÀíÆ÷¡£
+ * æ‹›æ¶ç®¡ç†å™¨ã€‚
  * <p>
- * Öâ»÷ºó¿ªÆôÒ»¸ö¶Ì´°¿Ú£¨Ä¬ÈÏ 0.5 Ãë£©¡£
- * ´°¿ÚÄÚ±»ÉúÎï¹¥»÷Ê±´¥·¢ÕĞ¼Ü£º
+ * è‚˜å‡»åå¼€å¯ä¸€ä¸ªçŸ­çª—å£ï¼ˆé»˜è®¤ 0.5 ç§’ï¼‰ã€‚
+ * çª—å£å†…è¢«ç”Ÿç‰©æ”»å‡»æ—¶è§¦å‘æ‹›æ¶ï¼š
  * <ol>
- *     <li>ÍêÈ«ÃâÒß¸Ã´ÎÉËº¦£»</li>
- *     <li>²¥·ÅÕĞ¼ÜÒôĞ§£»</li>
- *     <li>¶Ô¹¥»÷ÕßÊÍ·ÅÒ»´ÎÖâ»÷£¨ÉËº¦ + »÷ÍË + ¿ÉÑ¡Ğı×ª£©¡£</li>
+ *     <li>å®Œå…¨å…ç–«è¯¥æ¬¡ä¼¤å®³ï¼›</li>
+ *     <li>æ’­æ”¾æ‹›æ¶éŸ³æ•ˆï¼›</li>
+ *     <li>å¯¹æ”»å‡»è€…é‡Šæ”¾ä¸€æ¬¡è‚˜å‡»ï¼ˆä¼¤å®³ + å‡»é€€ + å¯é€‰æ—‹è½¬ï¼‰ã€‚</li>
  * </ol>
- * Ò»´Î´°¿ÚÖ»µ²Ò»´Î¡£
+ * ä¸€æ¬¡çª—å£åªæŒ¡ä¸€æ¬¡ã€‚
  * <p>
- * ×¢Òâ£º±¾ÀàÍ¨¹ı {@code @Mod.EventBusSubscriber} ×Ô¶¯×¢²áµ½ Forge ÊÂ¼ş×ÜÏß£¬
- * ²»ÒªÔÚ {@link ElbowStrikeMod} ÀïÔÙÊÖ¶¯ register£¬·ñÔòÊÂ¼ş»á´¥·¢Á½´Î¡£
+ * æ³¨æ„ï¼šæœ¬ç±»é€šè¿‡ {@code @Mod.EventBusSubscriber} è‡ªåŠ¨æ³¨å†Œåˆ° Forge äº‹ä»¶æ€»çº¿ï¼Œ
+ * ä¸è¦åœ¨ {@link ElbowStrikeMod} é‡Œå†æ‰‹åŠ¨ registerï¼Œå¦åˆ™äº‹ä»¶ä¼šè§¦å‘ä¸¤æ¬¡ã€‚
  */
 @Mod.EventBusSubscriber(modid = ElbowStrikeMod.MODID)
 public final class ParryManager {
 
-    /** Íæ¼Ò UUID -> ÕĞ¼Ü´°¿Úµ½ÆÚµÄ gameTime */
+    /** ç©å®¶ UUID -> æ‹›æ¶çª—å£åˆ°æœŸçš„ gameTime */
     private static final Map<UUID, Long> PARRY_WINDOWS = new HashMap<>();
 
     private ParryManager() {}
 
     /**
-     * Öâ»÷Ê±µ÷ÓÃ£¨ÎŞÂÛÊÇ·ñÃüÖĞÄ¿±ê¶¼¿ªÆô´°¿Ú£¬
-     * ÒòÎª´°¿ÚÃèÊöµÄÊÇ"Öâ»÷¶¯×÷ºó 0.5 Ãë"£©¡£
+     * è‚˜å‡»æ—¶è°ƒç”¨ï¼ˆæ— è®ºæ˜¯å¦å‘½ä¸­ç›®æ ‡éƒ½å¼€å¯çª—å£ï¼Œ
+     * å› ä¸ºçª—å£æè¿°çš„æ˜¯"è‚˜å‡»åŠ¨ä½œå 0.5 ç§’"ï¼‰ã€‚
      */
     public static void openWindow(ServerPlayer player) {
         if (!ElbowStrikeConfig.COMMON.enableParry.get()) return;
@@ -67,21 +67,21 @@ public final class ParryManager {
 
         DamageSource source = event.getSource();
 
-        // µ¯ÉäÎï£¨¼ı¡¢»ğÇò¡¢Ñ©Çò¡­£©²»´¥·¢ÕĞ¼Ü
+        // å¼¹å°„ç‰©ï¼ˆç®­ã€ç«çƒã€é›ªçƒâ€¦ï¼‰ä¸è§¦å‘æ‹›æ¶
         if (source.getDirectEntity() instanceof Projectile) return;
 
         Entity attackerEntity = source.getEntity();
         if (!(attackerEntity instanceof LivingEntity attacker)) return;
         if (attacker == player) return;
 
-        // ÏûºÄ´°¿Ú£ºÒ»´ÎÖâ»÷Ö»ÄÜÕĞ¼ÜÒ»´Î
+        // æ¶ˆè€—çª—å£ï¼šä¸€æ¬¡è‚˜å‡»åªèƒ½æ‹›æ¶ä¸€æ¬¡
         PARRY_WINDOWS.remove(uuid);
 
-        // 1) ÍêÈ«ÃâÒß
+        // 1) å®Œå…¨å…ç–«
         event.setAmount(0.0F);
         event.setCanceled(true);
 
-        // 2) ÕĞ¼ÜÒôĞ§£¨¸´ÓÃÖâ»÷ÒôĞ§£¬Òôµ÷¸ü¸ßÒÔÊ¾Çø±ğ£©
+        // 2) æ‹›æ¶éŸ³æ•ˆï¼ˆå¤ç”¨è‚˜å‡»éŸ³æ•ˆï¼ŒéŸ³è°ƒæ›´é«˜ä»¥ç¤ºåŒºåˆ«ï¼‰
         player.level().playSound(
                 null,
                 player.getX(), player.getY() + 1.0D, player.getZ(),
@@ -90,11 +90,11 @@ public final class ParryManager {
                 1.0F, 1.8F
         );
 
-        // 3) ·´»÷Öâ»÷
+        // 3) åå‡»è‚˜å‡»
         ElbowStrikeHandler.parryCounter(player, attacker);
     }
 
-    /** Íæ¼ÒÍË³öÊ±Çåµô²ĞÁô´°¿Ú£¬±ÜÃâ UUID Ğ¹Â© */
+    /** ç©å®¶é€€å‡ºæ—¶æ¸…æ‰æ®‹ç•™çª—å£ï¼Œé¿å… UUID æ³„æ¼ */
     @SubscribeEvent
     public static void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.getEntity() instanceof ServerPlayer sp) {
