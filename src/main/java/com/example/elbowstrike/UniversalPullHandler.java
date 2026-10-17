@@ -7,7 +7,6 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
@@ -15,7 +14,6 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.server.ServerLifecycleHooks;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -229,28 +227,7 @@ public final class UniversalPullHandler {
     // ================================================================
     private static List<LivingEntity> findTargets(ServerPlayer player,
                                                   double range, double cone) {
-        var level = player.level();
-        Vec3 eye = player.getEyePosition();
-        Vec3 look = player.getLookAngle().normalize();
-
-        AABB box = player.getBoundingBox().inflate(range);
-        List<Entity> candidates = level.getEntities(player, box,
-                e -> e instanceof LivingEntity living && living.isAlive() && living.isPickable());
-
-        List<LivingEntity> result = new ArrayList<>();
-        for (Entity e : candidates) {
-            LivingEntity living = (LivingEntity) e;
-            Vec3 center = living.position().add(0.0D, living.getBbHeight() * 0.5D, 0.0D);
-            Vec3 to = center.subtract(eye);
-            double dist = to.length();
-
-            if (dist > range + living.getBbWidth() * 0.5D) continue;
-            if (dist < 1.0E-4D) continue;
-            if (to.normalize().dot(look) < cone) continue;
-
-            result.add(living);
-        }
-        return result;
+        return TargetFinder.findConeTargets(player, range, cone);
     }
 
     // ================================================================

@@ -1,7 +1,6 @@
 package com.example.elbowstrike;
 
 import com.example.elbowstrike.network.NetworkHandler;
-import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.common.Mod;
@@ -28,7 +27,8 @@ public class ElbowStrikeMod {
                 ElbowStrikeConfig.SPEC
         );
 
-        // 让 SpinManager 的事件监听器注册到 Forge 事件总线
-        MinecraftForge.EVENT_BUS.register(SpinManager.class);
+        // 注意：ParryManager / SpinManager / ThunderFormManager / UniversalPullHandler
+        // 均通过 @Mod.EventBusSubscriber 自动注册，切勿在此手动 register，
+        // 否则事件会触发两次（例如旋转速度翻倍、持续时间减半）。
     }
 }
