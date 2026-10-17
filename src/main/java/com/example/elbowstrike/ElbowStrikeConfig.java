@@ -44,6 +44,8 @@ public final class ElbowStrikeConfig {
         public final ForgeConfigSpec.IntValue spinDuration;
         public final ForgeConfigSpec.DoubleValue spinSpeed;
 
+        // ---- 暴击 ----（已移除：改为蓄力机制，见下方「蓄力」配置）
+
         // ---- 蓄力 ----
         public final ForgeConfigSpec.IntValue chargeMaxTicks;
         public final ForgeConfigSpec.DoubleValue chargeDamageMult;
@@ -354,9 +356,10 @@ public final class ElbowStrikeConfig {
 
             thunderFormAllowFallDamage = b
                     .comment(
-                            "是否允许雷霆形态期间受到摔落伤害",
+                            "【彩蛋】是否允许雷霆形态期间受到摔落伤害",
                             "false = 屏蔽摔落伤害（默认，安全落地）",
                             "true  = 不再屏蔽，从高处落下会受到坠落伤害",
+                            "小心。",
                             "默认值：false"
                     )
                     .define("thunderFormAllowFallDamage", false);
