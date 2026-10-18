@@ -80,6 +80,12 @@ public final class ElbowStrikeConfig {
         public final ForgeConfigSpec.DoubleValue universalPullSpeed;
         public final ForgeConfigSpec.DoubleValue universalPullStopDistance;
 
+        // ---- 特效 ----
+        public final ForgeConfigSpec.BooleanValue enableEffects;
+        public final ForgeConfigSpec.BooleanValue chargeParticles;
+        public final ForgeConfigSpec.BooleanValue impactParticles;
+        public final ForgeConfigSpec.BooleanValue screenShake;
+
         Common(ForgeConfigSpec.Builder b) {
             b.comment(
                     "Elbow Strike - 肘击模组配置文件",
@@ -430,6 +436,43 @@ public final class ElbowStrikeConfig {
                             "默认值：2.0"
                     )
                     .defineInRange("universalPullStopDistance", 2.0D, 1.0D, 5.0D);
+
+            b.pop();
+
+            // ============================================================
+            // 特效
+            // ============================================================
+            b.comment(
+                    "【特效设置】",
+                    "控制蓄力肘击的视觉反馈：蓄力粒子、命中冲击波、屏幕震动。",
+                    "纯客户端表现，关闭后不影响伤害与击退。"
+            ).push("effects");
+
+            enableEffects = b
+                    .comment("特效总开关。false = 关闭本模组全部肘击特效。默认值：true")
+                    .define("enableEffects", true);
+
+            chargeParticles = b
+                    .comment(
+                            "蓄力过程中在玩家周身生成聚拢粒子，强度随蓄力增长。",
+                            "默认值：true"
+                    )
+                    .define("chargeParticles", true);
+
+            impactParticles = b
+                    .comment(
+                            "命中时生成横扫弧与水平冲击波环，范围随蓄力增长。",
+                            "满蓄力额外触发音爆与电火花。",
+                            "默认值：true"
+                    )
+                    .define("impactParticles", true);
+
+            screenShake = b
+                    .comment(
+                            "释放肘击时屏幕震动，幅度随蓄力增长。",
+                            "默认值：true"
+                    )
+                    .define("screenShake", true);
 
             b.pop();
             b.pop();

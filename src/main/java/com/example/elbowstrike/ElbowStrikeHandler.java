@@ -2,7 +2,9 @@ package com.example.elbowstrike;
 
 import com.example.elbowstrike.network.NetworkHandler;
 import com.example.elbowstrike.network.SpinStartPacket;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
@@ -55,6 +57,14 @@ public final class ElbowStrikeHandler {
         // 开启招架窗口（无论是否命中目标，肘击动作本身即开启窗口）
         ParryManager.openWindow(player);
 
+        var cfg = ElbowStrikeConfig.COMMON;
+
+        // ---- 蓄力比例（0 = 瞬发，1 = 满蓄力）----
+        int maxCharge = cfg.chargeMaxTicks.get();
+        float chargeRatio = maxCharge > 0
+                ? Math.min((float) Math.max(chargeTicks, 0) / maxCharge, 1.0F)
+                : 0.0F;
+
         List<LivingEntity> targets = findTargets(player);
         if (targets.isEmpty()) {
             level.playSound(null,
@@ -62,20 +72,17 @@ public final class ElbowStrikeHandler {
                     ModSounds.ELBOW_STRIKE.get(),
                     SoundSource.PLAYERS,
                     0.6F, 1.2F);
+            // 落空也来一簇前方粒子，让玩家能感知蓄力强度
+            spawnWhiffEffects(level, player, chargeRatio);
             return;
         }
 
-        var cfg = ElbowStrikeConfig.COMMON;
         float baseDamage = cfg.damage.get().floatValue();
         double hKnock = cfg.knockbackHorizontal.get();
         double vKnock = cfg.knockbackVertical.get();
         int spinDuration = cfg.spinDuration.get();
 
         // ---- 蓄力缩放（线性插值：0 蓄力 = 基础值，满蓄力 = 倍率值） ----
-        int maxCharge = cfg.chargeMaxTicks.get();
-        float chargeRatio = maxCharge > 0
-                ? Math.min((float) Math.max(chargeTicks, 0) / maxCharge, 1.0F)
-                : 0.0F;
         float damageMult = 1.0F + (cfg.chargeDamageMult.get().floatValue() - 1.0F) * chargeRatio;
         double knockMult = 1.0 + (cfg.chargeKnockbackMult.get() - 1.0) * chargeRatio;
 
@@ -87,7 +94,11 @@ public final class ElbowStrikeHandler {
 
         for (LivingEntity target : targets) {
             applyHit(player, target, source, damage, hPower, vPower, spinDuration, true);
+            spawnTargetEffects(level, target, chargeRatio);
         }
+
+        // ---- 前方冲击波 ----
+        spawnImpactEffects(level, player, chargeRatio);
 
         // ---- 音效（音调随蓄力升高，给玩家反馈） ----
         float pitch = 1.0F + chargeRatio * 0.4F;
@@ -96,6 +107,85 @@ public final class ElbowStrikeHandler {
                 ModSounds.ELBOW_STRIKE.get(),
                 SoundSource.PLAYERS,
                 1.0F, pitch);
+    }
+
+    // ================================================================
+    // 命中特效（服务端生成粒子，自动下发给附近客户端）
+    // ================================================================
+
+    private static boolean effectsEnabled() {
+        return ElbowStrikeConfig.COMMON.enableEffects.get();
+    }
+
+    /** 玩家前方 1.2 格、胸口高度的特效中心点 */
+    private static Vec3 frontPoint(ServerPlayer player) {
+        Vec3 look = player.getLookAngle();
+        return new Vec3(
+                player.getX() + look.x * 1.2D,
+                player.getY() + player.getEyeHeight() * 0.6D,
+                player.getZ() + look.z * 1.2D
+        );
+    }
+
+    /** 命中：前方横扫弧 + 水平冲击波环，强度随蓄力增长 */
+    private static void spawnImpactEffects(Level level, ServerPlayer player, float chargeRatio) {
+        if (!effectsEnabled() || !ElbowStrikeConfig.COMMON.impactParticles.get()) return;
+        if (!(level instanceof ServerLevel sl)) return;
+
+        Vec3 c = frontPoint(player);
+
+        // 1) 横扫弧（类似剑的横扫粒子）
+        int sweep = 4 + Math.round(chargeRatio * 12.0F);
+        sl.sendParticles(ParticleTypes.SWEEP_ATTACK,
+                c.x, c.y, c.z, sweep, 0.6D, 0.3D, 0.6D, 0.0D);
+
+        // 2) 水平冲击波环，半径与数量随蓄力增长
+        int ring = 8 + Math.round(chargeRatio * 24.0F);
+        double radius = 0.5D + chargeRatio * 1.8D;
+        for (int i = 0; i < ring; i++) {
+            double a = Math.PI * 2.0D * i / ring;
+            sl.sendParticles(ParticleTypes.END_ROD,
+                    c.x + Math.cos(a) * radius, c.y, c.z + Math.sin(a) * radius,
+                    1, 0.0D, 0.0D, 0.0D, 0.02D);
+        }
+
+        // 3) 满蓄力额外爆发
+        if (chargeRatio >= 0.999F) {
+            sl.sendParticles(ParticleTypes.SONIC_BOOM, c.x, c.y, c.z, 1, 0.0D, 0.0D, 0.0D, 0.0D);
+            sl.sendParticles(ParticleTypes.ELECTRIC_SPARK,
+                    c.x, c.y, c.z, 30, 0.8D, 0.6D, 0.8D, 0.15D);
+        } else if (chargeRatio > 0.0F) {
+            sl.sendParticles(ParticleTypes.CRIT,
+                    c.x, c.y, c.z, Math.round(10.0F * chargeRatio), 0.5D, 0.4D, 0.5D, 0.08D);
+        }
+    }
+
+    /** 每个命中目标身上的粒子 */
+    private static void spawnTargetEffects(Level level, LivingEntity target, float chargeRatio) {
+        if (!effectsEnabled() || !ElbowStrikeConfig.COMMON.impactParticles.get()) return;
+        if (!(level instanceof ServerLevel sl)) return;
+
+        double y = target.getY() + target.getBbHeight() * 0.6D;
+        int count = 8 + Math.round(chargeRatio * 16.0F);
+        sl.sendParticles(ParticleTypes.ENCHANTED_HIT,
+                target.getX(), y, target.getZ(), count, 0.4D, 0.4D, 0.4D, 0.1D);
+        if (chargeRatio >= 0.999F) {
+            sl.sendParticles(ParticleTypes.ELECTRIC_SPARK,
+                    target.getX(), y, target.getZ(), 12, 0.3D, 0.4D, 0.3D, 0.1D);
+        }
+    }
+
+    /** 落空：只在前方来一小簇粒子，也能感觉出蓄力 */
+    private static void spawnWhiffEffects(Level level, ServerPlayer player, float chargeRatio) {
+        if (!effectsEnabled() || !ElbowStrikeConfig.COMMON.impactParticles.get()) return;
+        if (!(level instanceof ServerLevel sl)) return;
+
+        Vec3 c = frontPoint(player);
+        sl.sendParticles(ParticleTypes.SWEEP_ATTACK, c.x, c.y, c.z, 2, 0.3D, 0.2D, 0.3D, 0.0D);
+        if (chargeRatio > 0.0F) {
+            sl.sendParticles(ParticleTypes.CRIT,
+                    c.x, c.y, c.z, Math.round(6.0F * chargeRatio), 0.4D, 0.3D, 0.4D, 0.05D);
+        }
     }
 
     /**

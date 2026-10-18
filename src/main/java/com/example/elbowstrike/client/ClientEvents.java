@@ -59,6 +59,7 @@ public final class ClientEvents {
                 if (ClientChargeHandler.isCharging()) {
                     int chargeTicks = ClientChargeHandler.consumeChargeTicks();
                     NetworkHandler.CHANNEL.sendToServer(new ElbowStrikePacket(chargeTicks));
+                    ElbowClientEffects.triggerShake(chargeTicks);
                 }
             }
         } else if (event.getButton() == GLFW.GLFW_MOUSE_BUTTON_MIDDLE) {
