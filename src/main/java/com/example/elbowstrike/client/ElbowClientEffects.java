@@ -133,7 +133,7 @@ public final class ElbowClientEffects {
         float decay = shakeTicks / 16.0F; // 逐渐衰减到 0
         double t = (System.currentTimeMillis() % 1000L) / 1000.0D;
 
-        event.setRoll(event.getRoll() + Math.sin(t * 62.0D) * shakeAmplitude * decay);
-        event.setYaw(event.getYaw() + Math.sin(t * 79.0D) * shakeAmplitude * 0.35D * decay);
+        event.setRoll((float) (event.getRoll() + Math.sin(t * 62.0D) * shakeAmplitude * decay));
+        event.setYaw((float) (event.getYaw() + Math.sin(t * 79.0D) * shakeAmplitude * 0.35D * decay));
     }
 }
