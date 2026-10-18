@@ -6,9 +6,12 @@ import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
@@ -41,8 +44,9 @@ public final class ElbowStrikeHandler {
      *
      * @param player     施法玩家
      * @param chargeTicks 客户端蓄力 tick 数（0 = 瞬发，满值由 chargeMaxTicks 决定）
+     * @param dash       释放时是否按住前进键（W），true 则触发突进
      */
-    public static void strike(ServerPlayer player, int chargeTicks) {
+    public static void strike(ServerPlayer player, int chargeTicks, boolean dash) {
         Level level = player.level();
         long now = level.getGameTime();
 
@@ -64,6 +68,12 @@ public final class ElbowStrikeHandler {
         float chargeRatio = maxCharge > 0
                 ? Math.min((float) Math.max(chargeTicks, 0) / maxCharge, 1.0F)
                 : 0.0F;
+        boolean fullCharge = chargeRatio >= 0.999F;
+
+        // ---- 突进：按住 W 蓄力释放时向前冲刺 ----
+        if (dash) {
+            applyDash(level, player, chargeRatio);
+        }
 
         List<LivingEntity> targets = findTargets(player);
         if (targets.isEmpty()) {
@@ -87,6 +97,10 @@ public final class ElbowStrikeHandler {
         double knockMult = 1.0 + (cfg.chargeKnockbackMult.get() - 1.0) * chargeRatio;
 
         float damage = baseDamage * damageMult;
+        // ---- 满蓄力额外附加伤害 ----
+        if (fullCharge) {
+            damage += cfg.chargeFullBonusDamage.get().floatValue();
+        }
         double hPower = hKnock * knockMult;
         double vPower = vKnock * knockMult;
 
@@ -95,6 +109,10 @@ public final class ElbowStrikeHandler {
         for (LivingEntity target : targets) {
             applyHit(player, target, source, damage, hPower, vPower, spinDuration, true);
             spawnTargetEffects(level, target, chargeRatio);
+            // ---- 满蓄力眩晕（减速 + 虚弱）----
+            if (fullCharge && cfg.chargeFullStun.get()) {
+                applyStun(target, cfg.chargeFullStunTicks.get());
+            }
         }
 
         // ---- 前方冲击波 ----
@@ -107,6 +125,36 @@ public final class ElbowStrikeHandler {
                 ModSounds.ELBOW_STRIKE.get(),
                 SoundSource.PLAYERS,
                 1.0F, pitch);
+    }
+
+    // ================================================================
+    // 突进 / 眩晕
+    // ================================================================
+
+    /** 向前突进：沿视线方向给玩家一次速度，按住 W 蓄力释放时调用 */
+    private static void applyDash(Level level, ServerPlayer player, float chargeRatio) {
+        var cfg = ElbowStrikeConfig.COMMON;
+        if (!cfg.enableChargeDash.get()) return;
+        if (chargeRatio <= 0.05F) return;
+
+        Vec3 look = player.getLookAngle();
+        double speed = cfg.chargeDashSpeed.get() * chargeRatio;
+        double vy = cfg.chargeDashVertical.get() * chargeRatio;
+
+        player.setDeltaMovement(look.x * speed, vy, look.z * speed);
+        player.hasImpulse = true;
+        player.hurtMarked = true;
+        player.connection.send(new ClientboundSetEntityMotionPacket(player));
+
+        level.playSound(null,
+                player.getX(), player.getY() + 1.0D, player.getZ(),
+                SoundEvents.PLAYER_ATTACK_SWEEP, SoundSource.PLAYERS, 0.8F, 1.5F);
+    }
+
+    /** 满蓄力眩晕：减速 + 虚弱，让目标短暂失去反击能力 */
+    private static void applyStun(LivingEntity target, int ticks) {
+        target.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, ticks, 4, false, true));
+        target.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, ticks, 1, false, true));
     }
 
     // ================================================================

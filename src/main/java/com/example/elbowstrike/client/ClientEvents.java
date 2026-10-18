@@ -58,7 +58,9 @@ public final class ClientEvents {
             } else if (event.getAction() == GLFW.GLFW_RELEASE) {
                 if (ClientChargeHandler.isCharging()) {
                     int chargeTicks = ClientChargeHandler.consumeChargeTicks();
-                    NetworkHandler.CHANNEL.sendToServer(new ElbowStrikePacket(chargeTicks));
+                    // 按住前进键（W）蓄力释放 → 突进
+                    boolean dash = mc.options.keyUp.isDown();
+                    NetworkHandler.CHANNEL.sendToServer(new ElbowStrikePacket(chargeTicks, dash));
                     ElbowClientEffects.triggerShake(chargeTicks);
                 }
             }

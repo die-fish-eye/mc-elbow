@@ -51,6 +51,16 @@ public final class ElbowStrikeConfig {
         public final ForgeConfigSpec.DoubleValue chargeDamageMult;
         public final ForgeConfigSpec.DoubleValue chargeKnockbackMult;
 
+        // ---- 满蓄力额外加成 ----
+        public final ForgeConfigSpec.DoubleValue chargeFullBonusDamage;
+        public final ForgeConfigSpec.BooleanValue chargeFullStun;
+        public final ForgeConfigSpec.IntValue chargeFullStunTicks;
+
+        // ---- 蓄力突进 ----
+        public final ForgeConfigSpec.BooleanValue enableChargeDash;
+        public final ForgeConfigSpec.DoubleValue chargeDashSpeed;
+        public final ForgeConfigSpec.DoubleValue chargeDashVertical;
+
         // ---- 招架 ----
         public final ForgeConfigSpec.BooleanValue enableParry;
         public final ForgeConfigSpec.IntValue parryWindowTicks;
@@ -122,9 +132,9 @@ public final class ElbowStrikeConfig {
                             "基础伤害（单位：点，即半颗心）",
                             "参考：2.0 = 1 颗心；20.0 = 10 颗心。",
                             "取值范围：0.0 ~ 1000.0",
-                            "默认值：3.0"
+                            "默认值：5.0"
                     )
-                    .defineInRange("damage", 3.0D, 0.0D, 1000.0D);
+                    .defineInRange("damage", 5.0D, 0.0D, 1000.0D);
 
             cooldownTicks = b
                     .comment(
@@ -211,9 +221,9 @@ public final class ElbowStrikeConfig {
                             "满蓄力时的伤害倍率（乘算）",
                             "0 蓄力 = 1.0×基础伤害；满蓄力 = 此值×基础伤害。",
                             "取值范围：1.0 ~ 10.0",
-                            "默认值：3.0"
+                            "默认值：6.0（5×6 = 30 点 = 15 颗心）"
                     )
-                    .defineInRange("chargeDamageMult", 3.0D, 1.0D, 10.0D);
+                    .defineInRange("chargeDamageMult", 6.0D, 1.0D, 10.0D);
 
             chargeKnockbackMult = b
                     .comment(
@@ -223,6 +233,53 @@ public final class ElbowStrikeConfig {
                             "默认值：2.0"
                     )
                     .defineInRange("chargeKnockbackMult", 2.0D, 1.0D, 5.0D);
+
+            chargeFullBonusDamage = b
+                    .comment(
+                            "【满蓄力额外加成】满蓄力命中时的附加伤害（在倍率伤害之上再加）",
+                            "取值范围：0.0 ~ 100.0",
+                            "默认值：8.0（配合默认值，满蓄力总伤害 ≈ 38 点）"
+                    )
+                    .defineInRange("chargeFullBonusDamage", 8.0D, 0.0D, 100.0D);
+
+            chargeFullStun = b
+                    .comment(
+                            "满蓄力命中时是否让目标短暂「眩晕」（减速 + 虚弱），默认值：true"
+                    )
+                    .define("chargeFullStun", true);
+
+            chargeFullStunTicks = b
+                    .comment(
+                            "满蓄力眩晕持续时间（单位：tick，20 tick = 1 秒）",
+                            "取值范围：0 ~ 200",
+                            "默认值：40（2 秒）"
+                    )
+                    .defineInRange("chargeFullStunTicks", 40, 0, 200);
+
+            enableChargeDash = b
+                    .comment(
+                            "【蓄力突进】是否启用：按住前进键（W）蓄力并释放肘击时向前突进。",
+                            "默认值：true"
+                    )
+                    .define("enableChargeDash", true);
+
+            chargeDashSpeed = b
+                    .comment(
+                            "突进水平速度（单位：格/tick），按蓄力比例缩放（满蓄力 = 此值）",
+                            "参考：0.8 = 小幅前冲；1.5 = 明显突进（默认）；3.0 = 极速突进。",
+                            "取值范围：0.0 ~ 10.0",
+                            "默认值：1.5"
+                    )
+                    .defineInRange("chargeDashSpeed", 1.5D, 0.0D, 10.0D);
+
+            chargeDashVertical = b
+                    .comment(
+                            "突进垂直速度（单位：格/tick，正值向上），按蓄力比例缩放",
+                            "参考：0.0 = 贴地突进；0.2 = 略微跃起（默认）；0.4 = 明显跃起。",
+                            "取值范围：-1.0 ~ 2.0",
+                            "默认值：0.2"
+                    )
+                    .defineInRange("chargeDashVertical", 0.2D, -1.0D, 2.0D);
 
             b.pop();
 
