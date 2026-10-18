@@ -28,8 +28,8 @@ import net.minecraftforge.fml.common.Mod;
         bus = Mod.EventBusSubscriber.Bus.MOD)
 public final class ChargeBarOverlay {
 
-    private static final ResourceLocation CHARGE_BAR_ID =
-            new ResourceLocation(ElbowStrikeMod.MODID, "charge_bar");
+    private static final String CHARGE_BAR_ID = 
+        ElbowStrikeMod.MODID + ":charge_bar";
 
     /** 进度条尺寸（GUI 缩放像素） */
     private static final int BAR_WIDTH = 132;
