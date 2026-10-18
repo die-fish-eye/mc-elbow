@@ -60,6 +60,7 @@ public final class ElbowStrikeConfig {
         public final ForgeConfigSpec.BooleanValue enableChargeDash;
         public final ForgeConfigSpec.DoubleValue chargeDashSpeed;
         public final ForgeConfigSpec.DoubleValue chargeDashVertical;
+        public final ForgeConfigSpec.IntValue chargeDashHitDelayTicks;
 
         // ---- 招架 ----
         public final ForgeConfigSpec.BooleanValue enableParry;
@@ -280,6 +281,15 @@ public final class ElbowStrikeConfig {
                             "默认值：0.2"
                     )
                     .defineInRange("chargeDashVertical", 0.2D, -1.0D, 2.0D);
+
+            chargeDashHitDelayTicks = b
+                    .comment(
+                            "【突进判定延迟】突进时把命中判定挂起的最大时长（单位：tick）",
+                            "突进后目标一进入范围立即出手；若一直没进入范围，则最多等这么久后",
+                            "在当前位置结算（落空反馈）。默认值：6",
+                            "取值范围：1 ~ 40"
+                    )
+                    .defineInRange("chargeDashHitDelayTicks", 6, 1, 40);
 
             b.pop();
 

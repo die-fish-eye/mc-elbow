@@ -15,6 +15,7 @@ import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
+import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -36,6 +37,16 @@ public final class ElbowStrikeHandler {
 
     /** 玩家 UUID -> 上次肘击时的 gameTime（用于冷却判定） */
     private static final Map<UUID, Long> COOLDOWNS = new HashMap<>();
+
+    /**
+     * 带突进的肘击：突进会让玩家离开原地，若立刻判定，命中位置会停留在起跳点。
+     * 因此把这些肘击挂起，等位移后目标进入范围（或超时）再结算。
+     * 玩家 UUID -> 待结算信息。
+     */
+    private static final Map<UUID, PendingStrike> PENDING_DASH_STRIKES = new HashMap<>();
+
+    /** 待结算的突进肘击：蓄力 tick 数 + 最迟结算的 gameTime */
+    private record PendingStrike(int chargeTicks, long resolveAt) {}
 
     private ElbowStrikeHandler() {}
 
@@ -63,17 +74,43 @@ public final class ElbowStrikeHandler {
 
         var cfg = ElbowStrikeConfig.COMMON;
 
-        // ---- 蓄力比例（0 = 瞬发，1 = 满蓄力）----
-        int maxCharge = cfg.chargeMaxTicks.get();
-        float chargeRatio = maxCharge > 0
-                ? Math.min((float) Math.max(chargeTicks, 0) / maxCharge, 1.0F)
-                : 0.0F;
-        boolean fullCharge = chargeRatio >= 0.999F;
-
         // ---- 突进：按住 W 蓄力释放时向前冲刺 ----
-        if (dash) {
-            applyDash(level, player, chargeRatio);
+        // 突进会让玩家离开原地，若此刻立刻判定，命中位置会停留在起跳点，
+        // 表现为「冲到目标面前却没有伤害」。因此突进时先位移，
+        // 把判定挂起，等目标进入范围（或位移结束）再结算。
+        if (dash && cfg.enableChargeDash.get()) {
+            float ratio = chargeRatioOf(chargeTicks);
+            if (ratio > 0.05F) {
+                applyDash(level, player, ratio);
+                int cap = Math.max(cfg.chargeDashHitDelayTicks.get(), 1);
+                PENDING_DASH_STRIKES.put(player.getUUID(), new PendingStrike(chargeTicks, now + cap));
+                return;
+            }
         }
+
+        resolveStrike(player, chargeTicks);
+    }
+
+    /** 蓄力比例（0 = 瞬发，1 = 满蓄力） */
+    private static float chargeRatioOf(int chargeTicks) {
+        int max = ElbowStrikeConfig.COMMON.chargeMaxTicks.get();
+        return max > 0
+                ? Math.min((float) Math.max(chargeTicks, 0) / max, 1.0F)
+                : 0.0F;
+    }
+
+    /**
+     * 真正的命中判定与结算（在玩家当前位置执行）。
+     * <p>
+     * 普通肘击在释放瞬间调用；带突进的肘击由 {@link #onPlayerTick}
+     * 在位移后目标进入范围时调用，使命中位置跟随玩家。
+     */
+    private static void resolveStrike(ServerPlayer player, int chargeTicks) {
+        Level level = player.level();
+        var cfg = ElbowStrikeConfig.COMMON;
+
+        float chargeRatio = chargeRatioOf(chargeTicks);
+        boolean fullCharge = chargeRatio >= 0.999F;
 
         List<LivingEntity> targets = findTargets(player);
         if (targets.isEmpty()) {
@@ -127,6 +164,30 @@ public final class ElbowStrikeHandler {
                 1.0F, pitch);
     }
 
+    /**
+     * 结算挂起的突进肘击：位移后目标一进入判定范围就立刻出手；
+     * 若到最迟时间仍未命中，则在当前位置结算（落空反馈）。
+     */
+    @SubscribeEvent
+    public static void onPlayerTick(TickEvent.PlayerTickEvent event) {
+        if (event.phase != TickEvent.Phase.END) return;
+        if (!(event.player instanceof ServerPlayer sp)) return;
+        if (PENDING_DASH_STRIKES.isEmpty()) return;
+
+        UUID uuid = sp.getUUID();
+        PendingStrike pending = PENDING_DASH_STRIKES.get(uuid);
+        if (pending == null) return;
+
+        long now = sp.level().getGameTime();
+        boolean reached = !findTargets(sp).isEmpty();
+        if (!reached && now < pending.resolveAt()) return;
+
+        PENDING_DASH_STRIKES.remove(uuid);
+        if (sp.isAlive()) {
+            resolveStrike(sp, pending.chargeTicks());
+        }
+    }
+
     // ================================================================
     // 突进 / 眩晕
     // ================================================================
@@ -134,7 +195,6 @@ public final class ElbowStrikeHandler {
     /** 向前突进：沿视线方向给玩家一次速度，按住 W 蓄力释放时调用 */
     private static void applyDash(Level level, ServerPlayer player, float chargeRatio) {
         var cfg = ElbowStrikeConfig.COMMON;
-        if (!cfg.enableChargeDash.get()) return;
         if (chargeRatio <= 0.05F) return;
 
         Vec3 look = player.getLookAngle();
@@ -345,6 +405,7 @@ public final class ElbowStrikeHandler {
     public static void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.getEntity() instanceof ServerPlayer sp) {
             COOLDOWNS.remove(sp.getUUID());
+            PENDING_DASH_STRIKES.remove(sp.getUUID());
         }
     }
 }
