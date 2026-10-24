@@ -15,7 +15,6 @@ import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
-import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -37,16 +36,6 @@ public final class ElbowStrikeHandler {
 
     /** 玩家 UUID -> 上次肘击时的 gameTime（用于冷却判定） */
     private static final Map<UUID, Long> COOLDOWNS = new HashMap<>();
-
-    /**
-     * 带突进的肘击：突进会让玩家离开原地，若立刻判定，命中位置会停留在起跳点。
-     * 因此把这些肘击挂起，等位移后目标进入范围（或超时）再结算。
-     * 玩家 UUID -> 待结算信息。
-     */
-    private static final Map<UUID, PendingStrike> PENDING_DASH_STRIKES = new HashMap<>();
-
-    /** 待结算的突进肘击：蓄力 tick 数 + 最迟结算的 gameTime */
-    private record PendingStrike(int chargeTicks, long resolveAt) {}
 
     private ElbowStrikeHandler() {}
 
@@ -75,16 +64,13 @@ public final class ElbowStrikeHandler {
         var cfg = ElbowStrikeConfig.COMMON;
 
         // ---- 突进：按住 W 蓄力释放时向前冲刺 ----
-        // 突进会让玩家离开原地，若此刻立刻判定，命中位置会停留在起跳点，
-        // 表现为「冲到目标面前却没有伤害」。因此突进时先位移，
-        // 把判定挂起，等目标进入范围（或位移结束）再结算。
+        // 判定在突进后立刻执行，命中位置就是玩家当前（起冲）位置；
+        // 蓄力越长判定距离越远（见 chargeRangeBonus），
+        // 因此冲刺途中前方目标已在范围内，不会出现「冲到面前却没伤害」。
         if (dash && cfg.enableChargeDash.get()) {
             float ratio = chargeRatioOf(chargeTicks);
             if (ratio > 0.05F) {
                 applyDash(level, player, ratio);
-                int cap = Math.max(cfg.chargeDashHitDelayTicks.get(), 1);
-                PENDING_DASH_STRIKES.put(player.getUUID(), new PendingStrike(chargeTicks, now + cap));
-                return;
             }
         }
 
@@ -100,10 +86,10 @@ public final class ElbowStrikeHandler {
     }
 
     /**
-     * 真正的命中判定与结算（在玩家当前位置执行）。
+     * 真正的命中判定与结算（在玩家当前位置、释放瞬间执行）。
      * <p>
-     * 普通肘击在释放瞬间调用；带突进的肘击由 {@link #onPlayerTick}
-     * 在位移后目标进入范围时调用，使命中位置跟随玩家。
+     * 判定距离随蓄力比例增长：0 蓄力 = 配置的基础距离，满蓄力 = 基础距离 + 额外加成。
+     * 这样蓄力除了加伤害，也扩大攻击范围，无需延迟即可命中冲刺前方的目标。
      */
     private static void resolveStrike(ServerPlayer player, int chargeTicks) {
         Level level = player.level();
@@ -112,7 +98,7 @@ public final class ElbowStrikeHandler {
         float chargeRatio = chargeRatioOf(chargeTicks);
         boolean fullCharge = chargeRatio >= 0.999F;
 
-        List<LivingEntity> targets = findTargets(player);
+        List<LivingEntity> targets = findTargets(player, chargeRatio);
         if (targets.isEmpty()) {
             level.playSound(null,
                     player.getX(), player.getY(), player.getZ(),
@@ -164,44 +150,22 @@ public final class ElbowStrikeHandler {
                 1.0F, pitch);
     }
 
-    /**
-     * 结算挂起的突进肘击：位移后目标一进入判定范围就立刻出手；
-     * 若到最迟时间仍未命中，则在当前位置结算（落空反馈）。
-     */
-    @SubscribeEvent
-    public static void onPlayerTick(TickEvent.PlayerTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) return;
-        if (!(event.player instanceof ServerPlayer sp)) return;
-        if (PENDING_DASH_STRIKES.isEmpty()) return;
-
-        UUID uuid = sp.getUUID();
-        PendingStrike pending = PENDING_DASH_STRIKES.get(uuid);
-        if (pending == null) return;
-
-        long now = sp.level().getGameTime();
-        boolean reached = !findTargets(sp).isEmpty();
-        if (!reached && now < pending.resolveAt()) return;
-
-        PENDING_DASH_STRIKES.remove(uuid);
-        if (sp.isAlive()) {
-            resolveStrike(sp, pending.chargeTicks());
-        }
-    }
-
     // ================================================================
     // 突进 / 眩晕
     // ================================================================
 
-    /** 向前突进：沿视线方向给玩家一次速度，按住 W 蓄力释放时调用 */
+    /**
+     * 向前突进：沿视线水平方向给玩家一次速度，按住 W 蓄力释放时调用。
+     * 只作用于水平方向，不产生跃起。
+     */
     private static void applyDash(Level level, ServerPlayer player, float chargeRatio) {
         var cfg = ElbowStrikeConfig.COMMON;
         if (chargeRatio <= 0.05F) return;
 
         Vec3 look = player.getLookAngle();
         double speed = cfg.chargeDashSpeed.get() * chargeRatio;
-        double vy = cfg.chargeDashVertical.get() * chargeRatio;
 
-        player.setDeltaMovement(look.x * speed, vy, look.z * speed);
+        player.setDeltaMovement(look.x * speed, player.getDeltaMovement().y, look.z * speed);
         player.hasImpulse = true;
         player.hurtMarked = true;
         player.connection.send(new ClientboundSetEntityMotionPacket(player));
@@ -334,9 +298,16 @@ public final class ElbowStrikeHandler {
         );
     }
 
-    private static List<LivingEntity> findTargets(ServerPlayer player) {
-        double range = ElbowStrikeConfig.COMMON.range.get();
-        double cone = ElbowStrikeConfig.COMMON.cone.get();
+    /**
+     * 查找前方锥形范围内的目标。
+     *
+     * @param chargeRatio 蓄力比例（0 = 未蓄力，1 = 满蓄力），用于放大判定距离；
+     *                    0 蓄力时为配置的基础距离
+     */
+    private static List<LivingEntity> findTargets(ServerPlayer player, float chargeRatio) {
+        var cfg = ElbowStrikeConfig.COMMON;
+        double range = cfg.range.get() + cfg.chargeRangeBonus.get() * chargeRatio;
+        double cone = cfg.cone.get();
         return TargetFinder.findConeTargets(player, range, cone);
     }
 
@@ -405,7 +376,6 @@ public final class ElbowStrikeHandler {
     public static void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.getEntity() instanceof ServerPlayer sp) {
             COOLDOWNS.remove(sp.getUUID());
-            PENDING_DASH_STRIKES.remove(sp.getUUID());
         }
     }
 }

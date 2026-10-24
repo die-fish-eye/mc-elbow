@@ -50,6 +50,7 @@ public final class ElbowStrikeConfig {
         public final ForgeConfigSpec.IntValue chargeMaxTicks;
         public final ForgeConfigSpec.DoubleValue chargeDamageMult;
         public final ForgeConfigSpec.DoubleValue chargeKnockbackMult;
+        public final ForgeConfigSpec.DoubleValue chargeRangeBonus;
 
         // ---- 满蓄力额外加成 ----
         public final ForgeConfigSpec.DoubleValue chargeFullBonusDamage;
@@ -59,8 +60,6 @@ public final class ElbowStrikeConfig {
         // ---- 蓄力突进 ----
         public final ForgeConfigSpec.BooleanValue enableChargeDash;
         public final ForgeConfigSpec.DoubleValue chargeDashSpeed;
-        public final ForgeConfigSpec.DoubleValue chargeDashVertical;
-        public final ForgeConfigSpec.IntValue chargeDashHitDelayTicks;
 
         // ---- 招架 ----
         public final ForgeConfigSpec.BooleanValue enableParry;
@@ -95,7 +94,6 @@ public final class ElbowStrikeConfig {
         public final ForgeConfigSpec.BooleanValue enableEffects;
         public final ForgeConfigSpec.BooleanValue chargeParticles;
         public final ForgeConfigSpec.BooleanValue impactParticles;
-        public final ForgeConfigSpec.BooleanValue screenShake;
 
         Common(ForgeConfigSpec.Builder b) {
             b.comment(
@@ -235,6 +233,16 @@ public final class ElbowStrikeConfig {
                     )
                     .defineInRange("chargeKnockbackMult", 2.0D, 1.0D, 5.0D);
 
+            chargeRangeBonus = b
+                    .comment(
+                            "【蓄力延长判定距离】满蓄力时在基础判定距离（general.range）之上额外增加的距离（单位：格）",
+                            "0 蓄力 = general.range；满蓄力 = general.range + 此值。",
+                            "参考：0.0 = 蓄力不增加距离；2.0 = 满蓄力多 2 格（默认）；4.0 = 满蓄力够到很远的目标。",
+                            "取值范围：0.0 ~ 10.0",
+                            "默认值：2.0（默认基础 3.0 格 → 满蓄力 5.0 格）"
+                    )
+                    .defineInRange("chargeRangeBonus", 2.0D, 0.0D, 10.0D);
+
             chargeFullBonusDamage = b
                     .comment(
                             "【满蓄力额外加成】满蓄力命中时的附加伤害（在倍率伤害之上再加）",
@@ -267,29 +275,11 @@ public final class ElbowStrikeConfig {
             chargeDashSpeed = b
                     .comment(
                             "突进水平速度（单位：格/tick），按蓄力比例缩放（满蓄力 = 此值）",
-                            "参考：0.8 = 小幅前冲；1.5 = 明显突进（默认）；3.0 = 极速突进。",
+                            "参考：1.5 = 明显前冲；2.5 = 高速突进（默认）；4.0 = 近乎瞬移。",
                             "取值范围：0.0 ~ 10.0",
-                            "默认值：1.5"
+                            "默认值：2.5"
                     )
-                    .defineInRange("chargeDashSpeed", 1.5D, 0.0D, 10.0D);
-
-            chargeDashVertical = b
-                    .comment(
-                            "突进垂直速度（单位：格/tick，正值向上），按蓄力比例缩放",
-                            "参考：0.0 = 贴地突进；0.2 = 略微跃起（默认）；0.4 = 明显跃起。",
-                            "取值范围：-1.0 ~ 2.0",
-                            "默认值：0.2"
-                    )
-                    .defineInRange("chargeDashVertical", 0.2D, -1.0D, 2.0D);
-
-            chargeDashHitDelayTicks = b
-                    .comment(
-                            "【突进判定延迟】突进时把命中判定挂起的最大时长（单位：tick）",
-                            "突进后目标一进入范围立即出手；若一直没进入范围，则最多等这么久后",
-                            "在当前位置结算（落空反馈）。默认值：6",
-                            "取值范围：1 ~ 40"
-                    )
-                    .defineInRange("chargeDashHitDelayTicks", 6, 1, 40);
+                    .defineInRange("chargeDashSpeed", 2.5D, 0.0D, 10.0D);
 
             b.pop();
 
@@ -533,13 +523,6 @@ public final class ElbowStrikeConfig {
                             "默认值：true"
                     )
                     .define("impactParticles", true);
-
-            screenShake = b
-                    .comment(
-                            "释放肘击时屏幕震动，幅度随蓄力增长。",
-                            "默认值：true"
-                    )
-                    .define("screenShake", true);
 
             b.pop();
             b.pop();

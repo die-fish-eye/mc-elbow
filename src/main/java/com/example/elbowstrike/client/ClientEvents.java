@@ -61,7 +61,6 @@ public final class ClientEvents {
                     // 按住前进键（W）蓄力释放 → 突进
                     boolean dash = mc.options.keyUp.isDown();
                     NetworkHandler.CHANNEL.sendToServer(new ElbowStrikePacket(chargeTicks, dash));
-                    ElbowClientEffects.triggerShake(chargeTicks);
                 }
             }
         } else if (event.getButton() == GLFW.GLFW_MOUSE_BUTTON_MIDDLE) {
