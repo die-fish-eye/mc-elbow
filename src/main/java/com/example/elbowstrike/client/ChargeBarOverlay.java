@@ -40,8 +40,8 @@ public final class ChargeBarOverlay {
 
     /** 星星总数（奇数，便于有唯一中心） */
     private static final int STAR_COUNT = 11;
-    /** 中心星外半径（像素），向两侧每颗递减 1 */
-    private static final double CENTER_RADIUS = 8.0D;
+    /** 中心星外半径（像素），向两侧每颗递减 1；缩小版，避免挡视野 */
+    private static final double CENTER_RADIUS = 5.0D;
     /** 五角星内外半径比 */
     private static final double INNER_RATIO = 0.45D;
 
@@ -88,7 +88,7 @@ public final class ChargeBarOverlay {
         int screenWidth = mc.getWindow().getGuiScaledWidth();
         int screenHeight = mc.getWindow().getGuiScaledHeight();
 
-        // ---- 星星布局：以屏幕中心为轴，尺寸从中间向两侧递减 ----
+        // ---- 星星布局：整体靠右下方，尺寸从中间向两侧递减 ----
         double[] radius = new double[STAR_COUNT];
         double[] offsetX = new double[STAR_COUNT];
         int mid = STAR_COUNT / 2;
@@ -102,7 +102,10 @@ public final class ChargeBarOverlay {
             offsetX[mid - k] = -offsetX[mid + k];
         }
 
-        double cx = screenWidth / 2.0D;
+        // 整体靠右下方（右下内缩 24 像素，高度同经验条）
+        // 计算整排宽度，右对齐
+        double totalHalfWidth = offsetX[mid + mid] + radius[mid + mid]; // 最右那颗的偏移 + 半径
+        double cx = screenWidth - 24.0D - totalHalfWidth;
         double cy = screenHeight - 44.0D;
 
         long now = System.currentTimeMillis();
