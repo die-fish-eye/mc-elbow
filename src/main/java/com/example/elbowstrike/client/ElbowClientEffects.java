@@ -53,6 +53,8 @@ public final class ElbowClientEffects {
     private static final Vector3f C_VIOLET = new Vector3f(0.62F, 0.34F, 1.00F);
     /** 电光白 */
     private static final Vector3f C_WHITE = new Vector3f(0.88F, 0.96F, 1.00F);
+    /** 金（法阵主色） */
+    private static final Vector3f C_GOLD = new Vector3f(1.00F, 0.78F, 0.30F);
 
     /** 彩虹循环周期（毫秒） */
     private static final long RAINBOW_CYCLE_MS = 2800L;
@@ -236,77 +238,125 @@ public final class ElbowClientEffects {
     }
 
     // ================================================================
-    // 脚下魂环：贴地多层旋转环 + 扩散脉冲
+    // 脚下六芒星阵：多层同心六芒星 + 扩散脉冲
     // ================================================================
 
     /**
-     * 脚下魂环。
+     * 脚下六芒星阵（替代原先的圆环）。
      * <p>
-     * 修正了原先「看不见」的根因：粒子高度从 {@code getY() - 0.15}（陷进地面方块被遮挡）
-     * 提升到 {@code getY() + 0.08}，浮在地表之上；半径收窄、粒子数翻倍，肉眼可见性大幅提升。
+     * 每层是一个同心六芒星（两个重叠等边三角形），半径递增、方向交替旋转，
+     * 整体放大到最大 1.8 格，更有法阵气势。
+     * 主色为金白，中间层过渡冷色，满蓄时全阵走彩虹。
      */
     private static void spawnSoulRings(Minecraft mc, int tier, float progress) {
         Player p = mc.player;
         double cx = p.getX();
-        double cy = p.getY() + 0.08D;   // 浮在地面上方，不再被方块挡住
+        double cy = p.getY() + 0.08D;   // 浮在地面上方
         double cz = p.getZ();
 
-        int rings = Math.min(tier, 5);
-        double[] radius = { 0.55D, 0.72D, 0.89D, 1.06D, 1.25D };
-        int[] perTick = { 6, 7, 8, 9, 10 };
-        double[] speed = { 0.07D, -0.10D, 0.13D, -0.16D, 0.19D };
+        int layers = Math.min(tier, 5);
+        double[] radius = { 0.70D, 0.98D, 1.26D, 1.54D, 1.82D };
+        int[] perEdge = { 3, 4, 5, 6, 7 };   // 每条边撒的粒子数
+        double[] rotSpeed = { 0.06D, -0.09D, 0.13D, -0.16D, 0.19D };
         float phase = rainbowPhase();
 
-        for (int ring = 0; ring < rings; ring++) {
-            double r = radius[ring];
-            int n = perTick[ring];
-            double dir = Math.signum(speed[ring]);
-            double head = ORBIT_PHASE[ring] * dir;
+        for (int layer = 0; layer < layers; layer++) {
+            double r = radius[layer];
+            int n = perEdge[layer];
+            double dir = Math.signum(rotSpeed[layer]);
+            double rot = ORBIT_PHASE[layer] * dir;
 
-            for (int i = 0; i < n; i++) {
-                double a = head + (i / (double) n) * Math.PI * 2.0D;
-                double cos = Math.cos(a);
-                double sin = Math.sin(a);
+            // 六芒星 6 个顶点 + 6 条边（正三角 3 边 + 倒三角 3 边）
+            double[][] verts = hexagramVertices(cx, cz, r, rot);
+            int[][] edges = { {0,1},{1,2},{2,0}, {3,4},{4,5},{5,3} };
 
-                double px = cx + cos * r;
-                double pz = cz + sin * r;
-                double py = cy + (mc.level.random.nextDouble() - 0.5D) * 0.05D;
+            // 沿每条边撒粒子
+            for (int[] e : edges) {
+                double[] a = verts[e[0]];
+                double[] b = verts[e[1]];
+                double ex = b[0] - a[0];
+                double ez = b[1] - a[1];
+                double elen = Math.sqrt(ex * ex + ez * ez);
+                double vx = elen > 1e-4D ? (ex / elen) * 0.045D * dir : 0.0D;
+                double vz = elen > 1e-4D ? (ez / elen) * 0.045D * dir : 0.0D;
 
-                // 沿切线旋转 + 轻微向上飘，形成悬浮感
-                double vx = -sin * speed[ring] * 0.18D;
-                double vz = cos * speed[ring] * 0.18D;
-                double vy = 0.006D;
+                for (int i = 0; i <= n; i++) {
+                    double t = i / (double) n;
+                    double px = a[0] + ex * t;
+                    double pz = a[1] + ez * t;
+                    double py = cy + (mc.level.random.nextDouble() - 0.5D) * 0.04D;
+                    mc.level.addParticle(hexagramDust(layer, progress, phase), px, py, pz, vx, 0.006D, vz);
+                }
+            }
 
-                mc.level.addParticle(soulRingDust(ring, progress, a, phase), px, py, pz, vx, vy, vz);
+            // 6 个尖角处各点一颗高亮光（法阵尖角光点）
+            for (double[] v : verts) {
+                boolean isEdge = (layer == 0 || layer == layers - 1);
+                mc.level.addParticle(
+                        isEdge ? dust(C_GOLD, C_WHITE, 1.25F) : dust(C_CYAN, C_WHITE, 1.15F),
+                        v[0], cy, v[1],
+                        0.0D, 0.01D, 0.0D
+                );
+            }
+        }
+
+        // 阵心：向上的光柱（少量粒子，点缀）
+        if (progress > 0.3F) {
+            int coreN = Math.round((progress - 0.3F) * 6.0F);
+            for (int i = 0; i < coreN; i++) {
+                double a = mc.level.random.nextDouble() * Math.PI * 2.0D;
+                double r = mc.level.random.nextDouble() * 0.12D;
+                mc.level.addParticle(
+                        dust(C_GOLD, C_WHITE, 1.1F),
+                        cx + Math.cos(a) * r, cy, cz + Math.sin(a) * r,
+                        0.0D, 0.08D + mc.level.random.nextDouble() * 0.05D, 0.0D
+                );
             }
         }
     }
 
-    /** 脚下魂环的渐变色：冷色梯度逐层递进；满蓄时按角度取彩虹 */
-    private static ParticleOptions soulRingDust(int ring, float progress, double angle, float phase) {
-        if (progress >= 0.999F) {
-            float hue = (float) (angle / (Math.PI * 2.0D)) + phase;
-            return dust(hsv(hue, 0.65F, 1.0F), hsv(hue + 0.15F, 0.90F, 1.0F), 1.25F);
+    /**
+     * 计算六芒星的 6 个顶点（XZ 平面）。
+     * 0~2：正三角（顶点朝上）；3~5：倒三角（顶点朝下）。
+     */
+    private static double[][] hexagramVertices(double cx, double cz, double r, double rot) {
+        double[][] v = new double[6][2];
+        for (int i = 0; i < 3; i++) {
+            double a = rot + Math.PI / 2.0D + i * Math.PI * 2.0D / 3.0D;
+            v[i][0] = cx + Math.cos(a) * r;
+            v[i][1] = cz + Math.sin(a) * r;
         }
-        float scale = 0.90F + ring * 0.10F;
-        return switch (ring) {
-            case 0 -> dust(C_CYAN, C_ICE, scale);
-            case 1 -> dust(C_ICE, C_BLUE, scale);
-            case 2 -> dust(C_BLUE, C_INDIGO, scale);
-            case 3 -> dust(C_INDIGO, C_VIOLET, scale);
-            default -> dust(C_VIOLET, C_CYAN, scale);
+        for (int i = 0; i < 3; i++) {
+            double a = rot - Math.PI / 2.0D + i * Math.PI * 2.0D / 3.0D;
+            v[3 + i][0] = cx + Math.cos(a) * r;
+            v[3 + i][1] = cz + Math.sin(a) * r;
+        }
+        return v;
+    }
+
+    /** 六芒星每层的渐变配色：金白主色 + 中间冷色过渡；满蓄走彩虹 */
+    private static ParticleOptions hexagramDust(int layer, float progress, float phase) {
+        if (progress >= 0.999F) {
+            float hue = phase + layer * 0.08F;
+            return dust(hsv(hue, 0.65F, 1.0F), hsv(hue + 0.14F, 0.85F, 1.0F), 1.1F + layer * 0.04F);
+        }
+        // 最内、最外层金白，中间三层冷色梯度
+        if (layer == 0) return dust(C_GOLD, C_WHITE, 1.05F);
+        if (layer == 4) return dust(C_WHITE, C_GOLD, 1.15F);
+        return switch (layer) {
+            case 1 -> dust(C_CYAN, C_ICE, 0.95F);
+            case 2 -> dust(C_BLUE, C_INDIGO, 1.00F);
+            default -> dust(C_INDIGO, C_VIOLET, 1.05F);
         };
     }
 
-    /** 脚下每隔 2 tick 释放一圈向外扩散的脉冲环 */
+    /** 脚下每隔 2 tick 释放一圈向外扩散的六芒星脉冲 */
     private static void tickSoulPulse(Minecraft mc, float progress) {
-        // 刚开始蓄力时，脉冲半径从内环起步
-        if (soulPulseRadius < 0.5D) soulPulseRadius = 0.55D;
+        if (soulPulseRadius < 0.7D) soulPulseRadius = 0.70D;
         soulPulseTimer++;
-        // 半径每 tick 增长，每 2 tick 才撒一圈粒子，避免粒子过密
         if (soulPulseTimer % 2 != 0) {
-            soulPulseRadius += 0.10D + progress * 0.05D;
-            if (soulPulseRadius > 1.6D) soulPulseRadius = 0.55D;
+            soulPulseRadius += 0.12D + progress * 0.06D;
+            if (soulPulseRadius > 1.95D) soulPulseRadius = 0.70D;
             return;
         }
 
@@ -315,19 +365,30 @@ public final class ElbowClientEffects {
         double cy = p.getY() + 0.10D;
         double cz = p.getZ();
 
-        int n = 18;
-        for (int i = 0; i < n; i++) {
-            double a = Math.PI * 2.0D * i / n;
-            double px = cx + Math.cos(a) * soulPulseRadius;
-            double pz = cz + Math.sin(a) * soulPulseRadius;
-            mc.level.addParticle(
-                    dust(C_CYAN, C_INDIGO, 1.0F),
-                    px, cy, pz,
-                    Math.cos(a) * 0.05D, 0.004D, Math.sin(a) * 0.05D
-            );
+        double r = soulPulseRadius;
+        double rot = System.currentTimeMillis() / 2000.0D;
+        double[][] verts = hexagramVertices(cx, cz, r, rot);
+        int[][] edges = { {0,1},{1,2},{2,0}, {3,4},{4,5},{5,3} };
+        int n = 6;
+
+        for (int[] e : edges) {
+            double[] a = verts[e[0]];
+            double[] b = verts[e[1]];
+            for (int i = 0; i <= n; i++) {
+                double t = i / (double) n;
+                double px = a[0] + (b[0] - a[0]) * t;
+                double pz = a[1] + (b[1] - a[1]) * t;
+                // 径向向外扩散
+                double dx = px - cx;
+                double dz = pz - cz;
+                double dlen = Math.sqrt(dx * dx + dz * dz);
+                double vx = dlen > 1e-4D ? (dx / dlen) * 0.06D : 0.0D;
+                double vz = dlen > 1e-4D ? (dz / dlen) * 0.06D : 0.0D;
+                mc.level.addParticle(dust(C_GOLD, C_INDIGO, 1.0F), px, cy, pz, vx, 0.004D, vz);
+            }
         }
-        soulPulseRadius += 0.10D + progress * 0.05D;
-        if (soulPulseRadius > 1.6D) soulPulseRadius = 0.55D;
+        soulPulseRadius += 0.12D + progress * 0.06D;
+        if (soulPulseRadius > 1.95D) soulPulseRadius = 0.70D;
     }
 
     // ================================================================
