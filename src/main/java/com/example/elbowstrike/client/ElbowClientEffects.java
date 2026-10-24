@@ -55,6 +55,10 @@ public final class ElbowClientEffects {
     private static final Vector3f C_WHITE = new Vector3f(0.88F, 0.96F, 1.00F);
     /** 金（法阵主色） */
     private static final Vector3f C_GOLD = new Vector3f(1.00F, 0.78F, 0.30F);
+    /** 橙 */
+    private static final Vector3f C_ORANGE = new Vector3f(1.00F, 0.55F, 0.18F);
+    /** 红橙 */
+    private static final Vector3f C_RED = new Vector3f(1.00F, 0.35F, 0.20F);
 
     /** 彩虹循环周期（毫秒） */
     private static final long RAINBOW_CYCLE_MS = 2800L;
@@ -255,8 +259,10 @@ public final class ElbowClientEffects {
         double cz = p.getZ();
 
         int layers = Math.min(tier, 5);
-        double[] radius = { 0.70D, 0.98D, 1.26D, 1.54D, 1.82D };
-        int[] perEdge = { 3, 4, 5, 6, 7 };   // 每条边撒的粒子数
+        // 半径放大到最大 5 格，法阵更有气势
+        double[] radius = { 1.00D, 2.00D, 3.00D, 4.00D, 5.00D };
+        // 半径大，每边粒子数也要增加，避免边断断续续
+        int[] perEdge = { 6, 8, 10, 12, 14 };
         double[] rotSpeed = { 0.06D, -0.09D, 0.13D, -0.16D, 0.19D };
         float phase = rainbowPhase();
 
@@ -289,11 +295,10 @@ public final class ElbowClientEffects {
                 }
             }
 
-            // 6 个尖角处各点一颗高亮光（法阵尖角光点）
+            // 6 个尖角处各点一颗高亮光（金色尖角，法阵点睛）
             for (double[] v : verts) {
-                boolean isEdge = (layer == 0 || layer == layers - 1);
                 mc.level.addParticle(
-                        isEdge ? dust(C_GOLD, C_WHITE, 1.25F) : dust(C_CYAN, C_WHITE, 1.15F),
+                        dust(C_GOLD, C_WHITE, 1.30F),
                         v[0], cy, v[1],
                         0.0D, 0.01D, 0.0D
                 );
@@ -334,29 +339,28 @@ public final class ElbowClientEffects {
         return v;
     }
 
-    /** 六芒星每层的渐变配色：金白主色 + 中间冷色过渡；满蓄走彩虹 */
+    /**
+     * 六芒星每层配色：暖色系（金/橙/红），与背后冷色光环形成冷暖对比。
+     * 满蓄时保持金白高亮（不走彩虹，避免与背后彩虹光环冲突）。
+     */
     private static ParticleOptions hexagramDust(int layer, float progress, float phase) {
-        if (progress >= 0.999F) {
-            float hue = phase + layer * 0.08F;
-            return dust(hsv(hue, 0.65F, 1.0F), hsv(hue + 0.14F, 0.85F, 1.0F), 1.1F + layer * 0.04F);
-        }
-        // 最内、最外层金白，中间三层冷色梯度
-        if (layer == 0) return dust(C_GOLD, C_WHITE, 1.05F);
-        if (layer == 4) return dust(C_WHITE, C_GOLD, 1.15F);
+        float scale = 1.00F + layer * 0.04F;
         return switch (layer) {
-            case 1 -> dust(C_CYAN, C_ICE, 0.95F);
-            case 2 -> dust(C_BLUE, C_INDIGO, 1.00F);
-            default -> dust(C_INDIGO, C_VIOLET, 1.05F);
+            case 0 -> dust(C_GOLD, C_WHITE, scale);          // 最内：金 → 白
+            case 1 -> dust(C_ORANGE, C_GOLD, scale);          // 橙 → 金
+            case 2 -> dust(C_RED, C_ORANGE, scale);           // 红 → 橙
+            case 3 -> dust(C_GOLD, C_ORANGE, scale);          // 金 → 橙
+            default -> dust(C_WHITE, C_GOLD, scale + 0.1F);   // 最外：白 → 金（最大最亮）
         };
     }
 
     /** 脚下每隔 2 tick 释放一圈向外扩散的六芒星脉冲 */
     private static void tickSoulPulse(Minecraft mc, float progress) {
-        if (soulPulseRadius < 0.7D) soulPulseRadius = 0.70D;
+        if (soulPulseRadius < 1.0D) soulPulseRadius = 1.00D;
         soulPulseTimer++;
         if (soulPulseTimer % 2 != 0) {
-            soulPulseRadius += 0.12D + progress * 0.06D;
-            if (soulPulseRadius > 1.95D) soulPulseRadius = 0.70D;
+            soulPulseRadius += 0.22D + progress * 0.10D;
+            if (soulPulseRadius > 5.5D) soulPulseRadius = 1.00D;
             return;
         }
 
@@ -369,7 +373,7 @@ public final class ElbowClientEffects {
         double rot = System.currentTimeMillis() / 2000.0D;
         double[][] verts = hexagramVertices(cx, cz, r, rot);
         int[][] edges = { {0,1},{1,2},{2,0}, {3,4},{4,5},{5,3} };
-        int n = 6;
+        int n = 8;
 
         for (int[] e : edges) {
             double[] a = verts[e[0]];
@@ -382,13 +386,13 @@ public final class ElbowClientEffects {
                 double dx = px - cx;
                 double dz = pz - cz;
                 double dlen = Math.sqrt(dx * dx + dz * dz);
-                double vx = dlen > 1e-4D ? (dx / dlen) * 0.06D : 0.0D;
-                double vz = dlen > 1e-4D ? (dz / dlen) * 0.06D : 0.0D;
-                mc.level.addParticle(dust(C_GOLD, C_INDIGO, 1.0F), px, cy, pz, vx, 0.004D, vz);
+                double vx = dlen > 1e-4D ? (dx / dlen) * 0.08D : 0.0D;
+                double vz = dlen > 1e-4D ? (dz / dlen) * 0.08D : 0.0D;
+                mc.level.addParticle(dust(C_GOLD, C_ORANGE, 1.05F), px, cy, pz, vx, 0.004D, vz);
             }
         }
-        soulPulseRadius += 0.12D + progress * 0.06D;
-        if (soulPulseRadius > 1.95D) soulPulseRadius = 0.70D;
+        soulPulseRadius += 0.22D + progress * 0.10D;
+        if (soulPulseRadius > 5.5D) soulPulseRadius = 1.00D;
     }
 
     // ================================================================
