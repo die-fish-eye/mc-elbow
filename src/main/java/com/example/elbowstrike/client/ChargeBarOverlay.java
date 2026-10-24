@@ -1,14 +1,24 @@
 package com.example.elbowstrike.client;
 
 import com.example.elbowstrike.ElbowStrikeMod;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.BufferBuilder;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.Tesselator;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.util.Mth;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RenderGuiOverlayEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
+import org.joml.Matrix4f;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 星星蓄力条。
@@ -20,8 +30,10 @@ import net.minecraftforge.fml.common.Mod;
  *     <li>点亮：描边 + 内部星空渐变填充（深蓝 → 靛紫 → 星蓝）；</li>
  *     <li>点亮到最中间那颗（第 5 档 / 满蓄力）：整排变为循环彩虹色。</li>
  * </ul>
- * 注意：{@link RenderGuiOverlayEvent.Post} 会为每一个原版 HUD 元素各触发一次，
- * 这里用时间戳去重，保证每帧只绘制一次，避免重复绘制导致的卡顿。
+ * <b>性能</b>：{@code GuiGraphics.fill} 每调用一次都会单独上传并绘制一个批次，
+ * 星星需要上千个小方块，若逐个 fill 会造成每帧上千次 draw call（严重卡顿）。
+ * 因此这里把所有方块收集起来，用一个 {@link BufferBuilder} 批量绘制，每帧仅 1 次 draw call。
+ * 另外 {@link RenderGuiOverlayEvent.Post} 会为每个 HUD 元素各触发一次，需按帧去重。
  */
 @Mod.EventBusSubscriber(modid = ElbowStrikeMod.MODID, value = Dist.CLIENT)
 public final class ChargeBarOverlay {
@@ -50,6 +62,12 @@ public final class ChargeBarOverlay {
     private static final int SKY_MID = 0x34318F;
     private static final int SKY_BOTTOM = 0x2D6BA8;
 
+    /** 本帧待绘制的矩形（复用同一列表，避免每帧分配） */
+    private static final List<Quad> QUADS = new ArrayList<>(2048);
+
+    /** 一个带颜色的矩形（GUI 坐标 + ARGB） */
+    private record Quad(float x0, float y0, float x1, float y1, int argb) {}
+
     private ChargeBarOverlay() {}
 
     @SubscribeEvent
@@ -63,12 +81,10 @@ public final class ChargeBarOverlay {
         if (mc.player == null) return;
         if (!ClientChargeHandler.isCharging()) return;
 
-        GuiGraphics g = event.getGuiGraphics();
-        Font font = mc.font;
-
         int tier = ClientChargeHandler.getChargeTier();
         if (tier <= 0) return;
 
+        Font font = mc.font;
         int screenWidth = mc.getWindow().getGuiScaledWidth();
         int screenHeight = mc.getWindow().getGuiScaledHeight();
 
@@ -92,7 +108,7 @@ public final class ChargeBarOverlay {
         long now = System.currentTimeMillis();
         float rainbowPhase = (now % RAINBOW_CYCLE_MS) / (float) RAINBOW_CYCLE_MS;
 
-        // ---- 档位 → 点亮进度：5 档对应 11 颗星（0 档时不显示）----
+        // ---- 档位 → 点亮进度：5 档对应 11 颗星 ----
         float chargeRatio = tier / (float) ClientChargeHandler.CHARGE_TIERS;
         double litStars = chargeRatio * STAR_COUNT;
         int fullyLit = (int) Math.floor(litStars);
@@ -102,12 +118,14 @@ public final class ChargeBarOverlay {
         // 点亮顺序：从两侧向中间，即按「离中心距离」由远到近
         int[] order = buildLightingOrder(mid);
 
+        QUADS.clear();
+
         for (int step = 0; step < STAR_COUNT; step++) {
             int idx = order[step];
             double sx = cx + offsetX[idx];
             double r = radius[idx];
 
-            float fill; // 该星的点亮程度 0~1
+            float fill;
             if (step < fullyLit) {
                 fill = 1.0F;
             } else if (step == fullyLit) {
@@ -118,23 +136,71 @@ public final class ChargeBarOverlay {
 
             if (fill <= 0.0F) {
                 // 空心：先投影一层暗色描边，再画亮色描边，制造厚度
-                starOutline(g, sx + 1.0D, cy + 1.0D, r, 0x55000000);
-                starOutline(g, sx, cy, r, HOLLOW_COLOR);
+                starOutline(sx + 1.0D, cy + 1.0D, r, 0x55000000);
+                starOutline(sx, cy, r, HOLLOW_COLOR);
             } else {
                 int[] colors = starColors(idx, rainbow, rainbowPhase);
-                starFill(g, sx, cy, r, colors[0], colors[1], colors[2], fill);
-                starOutline(g, sx, cy, r, rainbow ? colors[3] : FILLED_EDGE);
-                starSparkles(g, sx, cy, r);
+                starFill(sx, cy, r, colors[0], colors[1], colors[2], fill);
+                starOutline(sx, cy, r, rainbow ? colors[3] : FILLED_EDGE);
+                starSparkles(sx, cy, r);
             }
         }
 
+        // ---- 一次性批量绘制所有矩形（本帧唯一一次 draw call）----
+        flushQuads(event.getGuiGraphics());
+
         // ---- 档位文字 ----
+        GuiGraphics g = event.getGuiGraphics();
         String text = rainbow ? "蓄力已满" : ("蓄力 " + tier + " / " + ClientChargeHandler.CHARGE_TIERS);
         int textColor = rainbow
                 ? Mth.hsvToRgb(rainbowPhase, 0.9F, 1.0F)
                 : 0xFF9FB0E0;
         int tw = font.width(text);
         g.drawString(font, text, (int) (cx - tw / 2.0D), (int) cy + 11, textColor, true);
+    }
+
+    /**
+     * 把收集到的矩形一次性写入 BufferBuilder 并绘制。
+     * <p>
+     * 与 {@code GuiGraphics.fill} 的区别：fill 每次都 begin/end 并立即 draw，
+     * 上千个方块就是上千次 draw call；这里只 begin 一次、end 一次。
+     */
+    private static void flushQuads(GuiGraphics g) {
+        if (QUADS.isEmpty()) return;
+
+        Matrix4f matrix = g.pose().last().pose();
+
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        RenderSystem.disableDepthTest();
+        RenderSystem.setShader(GameRenderer::getPositionColorShader);
+
+        Tesselator tesselator = Tesselator.getInstance();
+        BufferBuilder buffer = tesselator.getBuilder();
+        buffer.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
+
+        for (Quad q : QUADS) {
+            int a = (q.argb() >>> 24) & 0xFF;
+            int r = (q.argb() >> 16) & 0xFF;
+            int gg = (q.argb() >> 8) & 0xFF;
+            int b = q.argb() & 0xFF;
+
+            buffer.vertex(matrix, q.x0(), q.y0(), 0.0F).color(r, gg, b, a).endVertex();
+            buffer.vertex(matrix, q.x0(), q.y1(), 0.0F).color(r, gg, b, a).endVertex();
+            buffer.vertex(matrix, q.x1(), q.y1(), 0.0F).color(r, gg, b, a).endVertex();
+            buffer.vertex(matrix, q.x1(), q.y0(), 0.0F).color(r, gg, b, a).endVertex();
+        }
+
+        tesselator.end();
+
+        RenderSystem.enableDepthTest();
+        QUADS.clear();
+    }
+
+    /** 收集一个矩形 */
+    private static void addQuad(double x0, double y0, double x1, double y1, int argb) {
+        if (x1 <= x0 || y1 <= y0) return;
+        QUADS.add(new Quad((float) x0, (float) y0, (float) x1, (float) y1, argb));
     }
 
     /**
@@ -163,17 +229,16 @@ public final class ChargeBarOverlay {
                     Mth.hsvToRgb((base + 0.24F) % 1.0F, 1.0F, 1.0F)
             };
         }
-        // 每颗星略微偏移色相，整排看起来像一片星空
         float shift = (index - STAR_COUNT / 2) * 0.012F;
         return new int[]{
-                shiftColor(SKY_TOP, shift, 0.0F),
-                shiftColor(SKY_MID, shift, 0.0F),
-                shiftColor(SKY_BOTTOM, shift, 0.0F)
+                shiftColor(SKY_TOP, shift),
+                shiftColor(SKY_MID, shift),
+                shiftColor(SKY_BOTTOM, shift)
         };
     }
 
     // ================================================================
-    // 五角星绘制
+    // 五角星绘制（全部写入 QUADS，不直接绘制）
     // ================================================================
 
     /** 生成五角星的 10 个顶点（外/内交替，从正上方开始顺时针） */
@@ -190,22 +255,22 @@ public final class ChargeBarOverlay {
     }
 
     /** 空心星星：只描边 */
-    private static void starOutline(GuiGraphics g, double cx, double cy, double outerR, int color) {
+    private static void starOutline(double cx, double cy, double outerR, int color) {
         double[][] pts = starVertices(cx, cy, outerR);
         for (int i = 0; i < 10; i++) {
             double[] a = pts[i];
             double[] b = pts[(i + 1) % 10];
-            drawLine(g, (int) Math.round(a[0]), (int) Math.round(a[1]),
+            addLine((int) Math.round(a[0]), (int) Math.round(a[1]),
                     (int) Math.round(b[0]), (int) Math.round(b[1]), color);
         }
     }
 
     /**
-     * 实心星星：按扫描线填充，并做竖向渐变。
+     * 实心星星：按扫描线填充并做竖向渐变。
      *
      * @param partial 点亮比例 0~1，从底部向上填充
      */
-    private static void starFill(GuiGraphics g, double cx, double cy, double outerR,
+    private static void starFill(double cx, double cy, double outerR,
                                  int colorTop, int colorMid, int colorBottom, float partial) {
         double[][] pts = starVertices(cx, cy, outerR);
         int yTop = (int) Math.floor(cy - outerR);
@@ -214,11 +279,11 @@ public final class ChargeBarOverlay {
 
         int filledRows = Math.round(partial * rows);
         if (filledRows <= 0) return;
-        int startY = yBottom - filledRows; // 从底部开始点亮
+        int startY = yBottom - filledRows;
 
+        double[] xs = new double[10];
         for (int y = startY; y < yBottom; y++) {
             double sampleY = y + 0.5D;
-            double[] xs = new double[10];
             int n = 0;
             for (int i = 0; i < 10; i++) {
                 double[] a = pts[i];
@@ -229,7 +294,7 @@ public final class ChargeBarOverlay {
                 }
             }
             if (n < 2) continue;
-            // 交点排序（n 很小，直接插入排序）
+            // 插入排序（n 很小）
             for (int i = 1; i < n; i++) {
                 double v = xs[i];
                 int j = i - 1;
@@ -246,34 +311,28 @@ public final class ChargeBarOverlay {
                     : lerpColor(colorMid, colorBottom, (t - 0.5F) / 0.5F);
 
             for (int i = 0; i + 1 < n; i += 2) {
-                int x0 = (int) Math.round(xs[i]);
-                int x1 = (int) Math.round(xs[i + 1]);
-                if (x1 > x0) {
-                    g.fill(x0, y, x1, y + 1, 0xFF000000 | rgb);
-                }
+                addQuad(xs[i], y, xs[i + 1], y + 1.0D, 0xFF000000 | rgb);
             }
         }
     }
 
     /** 点亮后，在星星内部点两颗白色小星点，强化「星空」感 */
-    private static void starSparkles(GuiGraphics g, double cx, double cy, double outerR) {
-        int s1x = (int) Math.round(cx - outerR * 0.28D);
-        int s1y = (int) Math.round(cy - outerR * 0.30D);
-        int s2x = (int) Math.round(cx + outerR * 0.30D);
-        int s2y = (int) Math.round(cy + outerR * 0.10D);
-        g.fill(s1x, s1y, s1x + 1, s1y + 1, 0xE6FFFFFF);
-        g.fill(s2x, s2y, s2x + 1, s2y + 1, 0xB3FFFFFF);
+    private static void starSparkles(double cx, double cy, double outerR) {
+        addQuad(cx - outerR * 0.28D, cy - outerR * 0.30D,
+                cx - outerR * 0.28D + 1.0D, cy - outerR * 0.30D + 1.0D, 0xE6FFFFFF);
+        addQuad(cx + outerR * 0.30D, cy + outerR * 0.10D,
+                cx + outerR * 0.30D + 1.0D, cy + outerR * 0.10D + 1.0D, 0xB3FFFFFF);
     }
 
-    /** Bresenham 直线 */
-    private static void drawLine(GuiGraphics g, int x0, int y0, int x1, int y1, int color) {
+    /** 收集一条 1 像素宽的线（Bresenham） */
+    private static void addLine(int x0, int y0, int x1, int y1, int color) {
         int dx = Math.abs(x1 - x0);
         int dy = -Math.abs(y1 - y0);
         int sx = x0 < x1 ? 1 : -1;
         int sy = y0 < y1 ? 1 : -1;
         int err = dx + dy;
         while (true) {
-            g.fill(x0, y0, x0 + 1, y0 + 1, color);
+            addQuad(x0, y0, x0 + 1.0D, y0 + 1.0D, color);
             if (x0 == x1 && y0 == y1) break;
             int e2 = 2 * err;
             if (e2 >= dy) {
@@ -299,11 +358,10 @@ public final class ChargeBarOverlay {
     }
 
     /** 轻微偏移色相（用于让每颗星的星空色略有差异） */
-    private static int shiftColor(int rgb, float hueShift, float valueShift) {
+    private static int shiftColor(int rgb, float hueShift) {
         float[] hsv = new float[3];
         rgbToHsv(rgb, hsv);
         hsv[0] = (hsv[0] + hueShift + 1.0F) % 1.0F;
-        hsv[2] = Mth.clamp(hsv[2] + valueShift, 0.0F, 1.0F);
         return Mth.hsvToRgb(hsv[0], hsv[1], hsv[2]);
     }
 
