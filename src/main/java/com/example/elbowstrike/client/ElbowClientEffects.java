@@ -3,39 +3,81 @@ package com.example.elbowstrike.client;
 import com.example.elbowstrike.ElbowStrikeConfig;
 import com.example.elbowstrike.ElbowStrikeMod;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.particles.DustColorTransitionOptions;
 import net.minecraft.core.particles.ParticleOptions;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.sounds.SoundEvents;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
+import org.joml.Vector3f;
 
 /**
- * 蓄力肘击的客户端视觉反馈。
+ * 蓄力肘击 + 突进的客户端视觉反馈。
  * <p>
- * 全部粒子都围绕玩家身体（紧贴身后 + 脚下），保证不挡屏幕中央视野：
+ * 配色统一走「冷色能量系」：主体使用原版的双色渐变尘粒子
+ * {@link DustColorTransitionOptions}（{@code ParticleTypes.DUST_COLOR_TRANSITION}），
+ * 它可以在原版条件下任意指定「起始色 → 结束色」并让每个粒子在寿命内自动渐变，
+ * 而且尘粒子是全亮度渲染，不受环境光影响，颜色非常纯。
+ * <p>
+ * 三套特效：
  * <ul>
- *     <li><b>背后光环（多轨道）</b>：玩家身后贴身处的多层水平轨道环，
- *         每层粒子沿着轨道流动，蓄力越久层数越多、速度越快、颜色越亮；</li>
- *     <li><b>脚下魂环（斗罗风格）</b>：玩家脚下旋转的多层水平圆环，
- *         每档蓄力解锁一层，5 档时共 5 环同时旋转；</li>
- *     <li><b>满蓄力爆发</b>：蓄满瞬间背后爆一圈彩色 END_ROD + 脚下魂环炸出一道电光 + 铃音。</li>
+ *     <li><b>背后光环</b>：竖直圆盘，但只在圆盘上的一段弧里撒点、弧段随相位绕圈流动，
+ *         因此看起来是「一道流光绕环跑」而不是一块实心圆盘；</li>
+ *     <li><b>脚下魂环</b>：贴地（不陷进方块）的多层旋转环，颜色按冷色梯度递进，
+ *         外加一圈每 4 tick 向外扩散的脉冲环；</li>
+ *     <li><b>突进音爆</b>：突进期间每隔 3 tick 在身前生成 3 个竖直朝向的圆环，
+ *         半径与前进距离逐批增大，形成音爆激波推进的观感。</li>
  * </ul>
- * 可通过 {@code config/elbowstrike-common.toml} 的 {@code effects} 段开关。
  */
 @Mod.EventBusSubscriber(modid = ElbowStrikeMod.MODID, value = Dist.CLIENT)
 public final class ElbowClientEffects {
 
-    /** 本次蓄力是否已触发过「满蓄力」提示 */
+    // ================================================================
+    // 冷色能量系配色（RGB 0~1）
+    // ================================================================
+
+    /** 青 */
+    private static final Vector3f C_CYAN = new Vector3f(0.30F, 0.95F, 1.00F);
+    /** 冰白 */
+    private static final Vector3f C_ICE = new Vector3f(0.66F, 0.92F, 1.00F);
+    /** 冰蓝 */
+    private static final Vector3f C_BLUE = new Vector3f(0.22F, 0.62F, 1.00F);
+    /** 靛 */
+    private static final Vector3f C_INDIGO = new Vector3f(0.38F, 0.38F, 1.00F);
+    /** 紫 */
+    private static final Vector3f C_VIOLET = new Vector3f(0.62F, 0.34F, 1.00F);
+    /** 电光白 */
+    private static final Vector3f C_WHITE = new Vector3f(0.88F, 0.96F, 1.00F);
+
+    /** 彩虹循环周期（毫秒） */
+    private static final long RAINBOW_CYCLE_MS = 2800L;
+
+    /** 完成满蓄力提示是否已触发 */
     private static boolean fullChargeNotified = false;
 
-    /** 每个轨道的"当前相位"——在 static 字段里存，避免粒子一帧一帧乱跳 */
+    /** 每条背后轨道的流动相位（弧度），保证粒子是「流」而不是每帧随机跳动 */
     private static final double[] ORBIT_PHASE = new double[5];
 
+    /** 脚下魂环向外扩散的脉冲：当前半径与计时 */
+    private static double soulPulseRadius = 0.0D;
+    private static int soulPulseTimer = 0;
+
+    /** 突进音爆特效：剩余 tick 与批间隔计时 */
+    private static int dashFxTicks = 0;
+    private static int dashFxCalls = 0;
+
     private ElbowClientEffects() {}
+
+    /** 突进开始（客户端松手发包时调用），启动音爆圆环特效 */
+    public static void startDashEffect() {
+        dashFxTicks = 12;
+        dashFxCalls = 0;
+    }
 
     @SubscribeEvent
     public static void onClientTick(TickEvent.ClientTickEvent event) {
@@ -44,11 +86,22 @@ public final class ElbowClientEffects {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) {
             fullChargeNotified = false;
+            dashFxTicks = 0;
+            soulPulseTimer = 0;
+            soulPulseRadius = 0.0D;
             return;
         }
         if (!ElbowStrikeConfig.COMMON.enableEffects.get()) return;
+
+        // ---- 突进音爆：与蓄力状态无关，松手后才开始 ----
+        if (dashFxTicks > 0) {
+            tickDashFx(mc);
+        }
+
         if (!ClientChargeHandler.isCharging()) {
             fullChargeNotified = false;
+            soulPulseTimer = 0;
+            soulPulseRadius = 0.0D;
             return;
         }
 
@@ -56,9 +109,10 @@ public final class ElbowClientEffects {
         float ratio = tier / (float) ClientChargeHandler.CHARGE_TIERS;
 
         if (ElbowStrikeConfig.COMMON.chargeParticles.get()) {
-            updateOrbits(ratio);
-            spawnBackOrbits(mc, ratio);
+            updateOrbitPhase(ratio);
+            spawnBackOrbits(mc, tier, ratio);
             spawnSoulRings(mc, tier, ratio);
+            tickSoulPulse(mc, ratio);
         }
         if (tier >= ClientChargeHandler.CHARGE_TIERS && !fullChargeNotified) {
             fullChargeNotified = true;
@@ -66,220 +120,295 @@ public final class ElbowClientEffects {
         }
     }
 
-    /** 每 tick 推进轨道相位，让粒子平滑流动 */
-    private static void updateOrbits(float ratio) {
-        double baseSpeed = 0.04 + ratio * 0.08; // 蓄力越高转越快
+    // ================================================================
+    // 通用工具
+    // ================================================================
+
+    /** 构造一个「起始色 → 结束色」的渐变尘粒子（原版自带，颜色可任意指定） */
+    private static ParticleOptions dust(Vector3f from, Vector3f to, float scale) {
+        return new DustColorTransitionOptions(from, to, scale);
+    }
+
+    /** HSV → Vector3f（用于满蓄时按角度取彩虹色） */
+    private static Vector3f hsv(float hue, float sat, float val) {
+        int rgb = Mth.hsvToRgb(hue - (float) Math.floor(hue), sat, val);
+        return new Vector3f(
+                ((rgb >> 16) & 0xFF) / 255.0F,
+                ((rgb >> 8) & 0xFF) / 255.0F,
+                (rgb & 0xFF) / 255.0F
+        );
+    }
+
+    /** 当前彩虹相位（0~1，随时间循环） */
+    private static float rainbowPhase() {
+        return (System.currentTimeMillis() % RAINBOW_CYCLE_MS) / (float) RAINBOW_CYCLE_MS;
+    }
+
+    /** 每 tick 推进背后轨道的流动相位 */
+    private static void updateOrbitPhase(float ratio) {
+        double base = 0.05D + ratio * 0.07D;
         for (int i = 0; i < ORBIT_PHASE.length; i++) {
-            double speed = baseSpeed * (i % 2 == 0 ? 1.0 : -1.0) * (1.0 + i * 0.3);
-            ORBIT_PHASE[i] = (ORBIT_PHASE[i] + speed) % (Math.PI * 2.0D);
+            double dir = i % 2 == 0 ? 1.0D : -1.0D;
+            ORBIT_PHASE[i] = (ORBIT_PHASE[i] + base * dir * (1.0D + i * 0.25D)) % (Math.PI * 2.0D);
         }
     }
 
     // ================================================================
-    // 背后多轨道光环（竖直圆盘，正面观感最佳）
+    // 背后光环：竖直圆盘上的「流动光弧」
     // ================================================================
 
     /**
-     * 玩家身后的多轨道光环（<b>竖直</b>圆盘，正面观感最佳）。
+     * 背后竖直光环。
      * <p>
-     * 每条轨道都位于「垂直于视线」的竖直平面内，圆心在玩家背后 0.6 ~ 1.4 格、
-     * 高度约胸口；因此从正面（第三人称摄像机在身后）看过去是完整的圆形光环，
-     * 而不是一条扁平的横线。
-     * <p>
-     * 蓄力越高：轨道越多、每条轨道每 tick 粒子越多、转速越快、颜色越炫。
+     * 关键点：不在整圈撒点，只在圆盘上的一段弧（60° ~ 100°）内撒点，
+     * 弧头随相位绕圈前进，其余部分留空 —— 于是看起来是一道流光在环上流动，
+     * 而不是一块糊住视线的实心圆盘。
      */
-    private static void spawnBackOrbits(Minecraft mc, float progress) {
+    private static void spawnBackOrbits(Minecraft mc, int tier, float progress) {
         Player p = mc.player;
         Vec3 look = p.getLookAngle();
         double cx = p.getX();
-        double cy = p.getY() + 0.95D; // 胸口偏上，光环中心略高于腰部
+        double cy = p.getY() + 0.95D;
         double cz = p.getZ();
 
-        // 背后方向（水平分量取反）= 圆盘法线
+        // 背后方向（水平）= 圆盘法线
         double backX = -look.x;
         double backZ = -look.z;
-        double backLen = Math.sqrt(backX * backX + backZ * backZ);
-        if (backLen < 1.0E-4D) { backX = 0.0D; backZ = -1.0D; } else { backX /= backLen; backZ /= backLen; }
-
-        // 圆盘平面内的水平轴（与背后方向垂直）：right = cross(up, back)
+        double len = Math.sqrt(backX * backX + backZ * backZ);
+        if (len < 1.0E-4D) { backX = 0.0D; backZ = -1.0D; } else { backX /= len; backZ /= len; }
+        // 圆盘平面内的水平轴
         double rightX = backZ;
         double rightZ = -backX;
 
-        // 圆盘圆心 = 玩家身后紧贴（随蓄力略微后退）
-        double centerOffset = 0.6D + progress * 0.8D; // 0.6 → 1.4 格
+        double centerOffset = 0.6D + progress * 0.8D;
         double orbitCx = cx + backX * centerOffset;
         double orbitCz = cz + backZ * centerOffset;
 
-        // 解锁的轨道数 = 1~5 条
-        int unlockedOrbits = Math.max(1, Math.round(progress * 5.0F));
+        // 轨道数 1~3（不再 5 条，避免拥挤）
+        int orbits = Math.max(1, Math.min(3, (tier + 1) / 2));
+        // 弧段长度：60° → 100°
+        double arcLen = Math.toRadians(60.0D + progress * 40.0D);
+        float phase = rainbowPhase();
 
-        for (int orbit = 0; orbit < unlockedOrbits; orbit++) {
-            double orbitRadius = 0.28D + orbit * 0.14D; // 0.28 → 0.84（直径 1.68，约等于玩家身高）
-            int perTick = 1 + orbit;                     // 1 → 5
-            double phaseOffset = ORBIT_PHASE[orbit];
-            double spinDir = orbit % 2 == 0 ? 1.0D : -1.0D; // 相邻轨道反向旋转
-
-            ParticleOptions type = orbitParticleType(orbit, progress);
+        for (int orbit = 0; orbit < orbits; orbit++) {
+            double radius = 0.55D + orbit * 0.30D;   // 0.55 / 0.85 / 1.15
+            int perTick = 4 + orbit;                  // 4 / 5 / 6
+            double spinDir = orbit % 2 == 0 ? 1.0D : -1.0D;
+            double head = ORBIT_PHASE[orbit] * spinDir;
 
             for (int i = 0; i < perTick; i++) {
-                double angle = phaseOffset + (i / (double) perTick) * Math.PI * 2.0D;
-                double cos = Math.cos(angle);
-                double sin = Math.sin(angle);
+                double a = head + arcLen * (i / (double) perTick);
+                double cos = Math.cos(a);
+                double sin = Math.sin(a);
 
-                // 竖直圆盘上的点：水平轴 * cos + 竖直轴 * sin
-                double px = orbitCx + rightX * cos * orbitRadius;
-                double py = cy + sin * orbitRadius;
-                double pz = orbitCz + rightZ * cos * orbitRadius;
+                double px = orbitCx + rightX * cos * radius;
+                double py = cy + sin * radius;
+                double pz = orbitCz + rightZ * cos * radius;
 
-                // 沿视线方向的细微抖动（让环看起来有厚度，但不破坏圆盘形状）
-                double jitter = (mc.level.random.nextDouble() - 0.5D) * 0.06D;
+                // 沿视线方向的薄厚度
+                double jitter = (mc.level.random.nextDouble() - 0.5D) * 0.05D;
                 px += backX * jitter;
                 pz += backZ * jitter;
 
-                // 速度：沿圆盘切线方向，形成「流光绕环」的观感
-                double spin = 0.03D * spinDir;
+                // 沿圆弧切线方向流动
+                double spin = 0.045D * spinDir;
                 double vx = -sin * rightX * spin;
                 double vy = cos * spin;
                 double vz = -sin * rightZ * spin;
 
-                mc.level.addParticle(type, px, py, pz, vx, vy, vz);
-            }
-        }
-
-        // 额外：蓄力过半后，圆盘间隙里偶尔闪出电火花（"电流感"）
-        if (progress > 0.5F) {
-            int sparkCount = Math.round((progress - 0.5F) * 3.0F);
-            for (int i = 0; i < sparkCount; i++) {
-                double a = mc.level.random.nextDouble() * Math.PI * 2.0D;
-                double r = 0.30D + mc.level.random.nextDouble() * 0.6D;
-                mc.level.addParticle(
-                        ParticleTypes.ELECTRIC_SPARK,
-                        orbitCx + rightX * Math.cos(a) * r,
-                        cy + Math.sin(a) * r,
-                        orbitCz + rightZ * Math.cos(a) * r,
-                        0.0D, 0.0D, 0.0D
-                );
+                mc.level.addParticle(orbitDust(orbit, progress, a, phase), px, py, pz, vx, vy, vz);
             }
         }
     }
 
-    /**
-     * 每条轨道用的粒子类型。蓄力越久越炫：
-     * 1 档：CRIT（白）→ 2 档：END_ROD（靛蓝）→ 3 档：END_ROD + 零星 ELECTRIC_SPARK
-     * → 4 档：END_ROD + 更多 ELECTRIC_SPARK → 5 档：END_ROD + 密集 ELECTRIC_SPARK
-     */
-    private static ParticleOptions orbitParticleType(int orbit, float progress) {
+    /** 背后轨道的渐变色：冷色梯度；满蓄时按角度取彩虹 */
+    private static ParticleOptions orbitDust(int orbit, float progress, double angle, float phase) {
         if (progress >= 0.999F) {
-            // 满蓄：30% 概率混 ELECTRIC_SPARK
-            if (mcRandom() < 0.3F) return ParticleTypes.ELECTRIC_SPARK;
-            return ParticleTypes.END_ROD;
-        } else if (progress >= 0.6F) {
-            if (mcRandom() < 0.15F) return ParticleTypes.ELECTRIC_SPARK;
-            return ParticleTypes.END_ROD;
-        } else if (progress >= 0.3F) {
-            if (mcRandom() < 0.4F) return ParticleTypes.CRIT;
-            return ParticleTypes.END_ROD;
-        } else {
-            return ParticleTypes.CRIT;
+            float hue = (float) (angle / (Math.PI * 2.0D)) + phase;
+            return dust(hsv(hue, 0.70F, 1.0F), hsv(hue + 0.12F, 0.85F, 1.0F), 1.15F);
         }
+        float scale = 0.85F + progress * 0.30F;
+        return switch (orbit) {
+            case 0 -> dust(C_CYAN, C_ICE, scale);
+            case 1 -> dust(C_BLUE, C_ICE, scale);
+            default -> dust(C_INDIGO, C_VIOLET, scale);
+        };
     }
 
     // ================================================================
-    // 脚下魂环（斗罗大陆风格：玩家脚下旋转的多层水平圆环）
+    // 脚下魂环：贴地多层旋转环 + 扩散脉冲
     // ================================================================
 
     /**
-     * 脚下魂环：玩家脚下 y - 0.15 处的水平圆环。
+     * 脚下魂环。
      * <p>
-     * 每档蓄力解锁一层（1 档 1 环，5 档 5 环），半径递增、速度各异、方向有顺有逆。
-     * 颜色按斗罗魂环等级递进：白（10 年）→ 黄（百年）→ 紫（千年）→ 黑（万年）→ 金红（十万年）。
+     * 修正了原先「看不见」的根因：粒子高度从 {@code getY() - 0.15}（陷进地面方块被遮挡）
+     * 提升到 {@code getY() + 0.08}，浮在地表之上；半径收窄、粒子数翻倍，肉眼可见性大幅提升。
      */
     private static void spawnSoulRings(Minecraft mc, int tier, float progress) {
         Player p = mc.player;
         double cx = p.getX();
-        double cy = p.getY() - 0.15D; // 脚下半格以下，贴地
+        double cy = p.getY() + 0.08D;   // 浮在地面上方，不再被方块挡住
         double cz = p.getZ();
 
-        // 魂环配置：半径（格）、每 tick 粒子数、旋转方向（+1 / -1）、相位
-        // 每层旋转速度不同，有的顺时针有的逆时针，叠加起来很炫酷
-        int ringCount = Math.min(tier, 5);
-        double[] ringRadius = { 0.50D, 0.75D, 1.00D, 1.25D, 1.55D };
-        int[] perTick        = { 4, 5, 6, 7, 8 };
-        double[] ringSpeed   = { 0.06D, -0.09D, 0.12D, -0.15D, 0.18D }; // 方向交替，速度递增
+        int rings = Math.min(tier, 5);
+        double[] radius = { 0.55D, 0.72D, 0.89D, 1.06D, 1.25D };
+        int[] perTick = { 6, 7, 8, 9, 10 };
+        double[] speed = { 0.07D, -0.10D, 0.13D, -0.16D, 0.19D };
+        float phase = rainbowPhase();
 
-        for (int ring = 0; ring < ringCount; ring++) {
-            double phase = ORBIT_PHASE[ring]; // 复用上面的相位索引，速度方向不同
-            double radius = ringRadius[ring];
+        for (int ring = 0; ring < rings; ring++) {
+            double r = radius[ring];
             int n = perTick[ring];
-            // 因为 ringSpeed 交替取负，直接用 ringSpeed * ORBIT_PHASE 不行，
-            // 这里自己算一个带方向的 phase
-            double myPhase = phase * Math.signum(ringSpeed[ring]);
-
-            ParticleOptions type = soulRingParticleType(ring, progress);
+            double dir = Math.signum(speed[ring]);
+            double head = ORBIT_PHASE[ring] * dir;
 
             for (int i = 0; i < n; i++) {
-                double angle = myPhase + (i / (double) n) * Math.PI * 2.0D;
-                double px = cx + Math.cos(angle) * radius;
-                double pz = cz + Math.sin(angle) * radius;
-                double py = cy + (mc.level.random.nextDouble() - 0.5D) * 0.08D; // 几乎贴地
+                double a = head + (i / (double) n) * Math.PI * 2.0D;
+                double cos = Math.cos(a);
+                double sin = Math.sin(a);
 
-                // 速度：沿切线 + 轻微向外扩散 + 向上飘一点点（让环有"悬浮"感）
-                double tangentX = -Math.sin(angle);
-                double tangentZ = Math.cos(angle);
-                double vx = tangentX * ringSpeed[ring] * 0.15D + Math.cos(angle) * 0.005D * progress;
-                double vz = tangentZ * ringSpeed[ring] * 0.15D + Math.sin(angle) * 0.005D * progress;
-                double vy = 0.005D + (mc.level.random.nextDouble() - 0.5D) * 0.01D;
+                double px = cx + cos * r;
+                double pz = cz + sin * r;
+                double py = cy + (mc.level.random.nextDouble() - 0.5D) * 0.05D;
 
-                mc.level.addParticle(type, px, py, pz, vx, vy, vz);
+                // 沿切线旋转 + 轻微向上飘，形成悬浮感
+                double vx = -sin * speed[ring] * 0.18D;
+                double vz = cos * speed[ring] * 0.18D;
+                double vy = 0.006D;
+
+                mc.level.addParticle(soulRingDust(ring, progress, a, phase), px, py, pz, vx, vy, vz);
             }
         }
+    }
 
-        // 满蓄力时最内层魂环额外喷一圈电光（斗罗十万年魂环的感觉）
+    /** 脚下魂环的渐变色：冷色梯度逐层递进；满蓄时按角度取彩虹 */
+    private static ParticleOptions soulRingDust(int ring, float progress, double angle, float phase) {
         if (progress >= 0.999F) {
-            int extra = 6;
-            for (int i = 0; i < extra; i++) {
-                double a = mc.level.random.nextDouble() * Math.PI * 2.0D;
-                double r = 0.45D + mc.level.random.nextDouble() * 0.08D;
+            float hue = (float) (angle / (Math.PI * 2.0D)) + phase;
+            return dust(hsv(hue, 0.65F, 1.0F), hsv(hue + 0.15F, 0.90F, 1.0F), 1.25F);
+        }
+        float scale = 0.90F + ring * 0.10F;
+        return switch (ring) {
+            case 0 -> dust(C_CYAN, C_ICE, scale);
+            case 1 -> dust(C_ICE, C_BLUE, scale);
+            case 2 -> dust(C_BLUE, C_INDIGO, scale);
+            case 3 -> dust(C_INDIGO, C_VIOLET, scale);
+            default -> dust(C_VIOLET, C_CYAN, scale);
+        };
+    }
+
+    /** 脚下每隔 2 tick 释放一圈向外扩散的脉冲环 */
+    private static void tickSoulPulse(Minecraft mc, float progress) {
+        // 刚开始蓄力时，脉冲半径从内环起步
+        if (soulPulseRadius < 0.5D) soulPulseRadius = 0.55D;
+        soulPulseTimer++;
+        // 半径每 tick 增长，每 2 tick 才撒一圈粒子，避免粒子过密
+        if (soulPulseTimer % 2 != 0) {
+            soulPulseRadius += 0.10D + progress * 0.05D;
+            if (soulPulseRadius > 1.6D) soulPulseRadius = 0.55D;
+            return;
+        }
+
+        Player p = mc.player;
+        double cx = p.getX();
+        double cy = p.getY() + 0.10D;
+        double cz = p.getZ();
+
+        int n = 18;
+        for (int i = 0; i < n; i++) {
+            double a = Math.PI * 2.0D * i / n;
+            double px = cx + Math.cos(a) * soulPulseRadius;
+            double pz = cz + Math.sin(a) * soulPulseRadius;
+            mc.level.addParticle(
+                    dust(C_CYAN, C_INDIGO, 1.0F),
+                    px, cy, pz,
+                    Math.cos(a) * 0.05D, 0.004D, Math.sin(a) * 0.05D
+            );
+        }
+        soulPulseRadius += 0.10D + progress * 0.05D;
+        if (soulPulseRadius > 1.6D) soulPulseRadius = 0.55D;
+    }
+
+    // ================================================================
+    // 突进音爆：3 个竖直朝向的圆环逐批变大
+    // ================================================================
+
+    /**
+     * 突进期间每隔 3 tick 生成一批音爆圆环。
+     * <p>
+     * 每批 3 个环，环平面垂直于玩家前进方向（即「竖着朝向玩家方向」），
+     * 半径与前进距离随批次递增 —— 由小变大的激波一层层向前推开。
+     */
+    private static void tickDashFx(Minecraft mc) {
+        // 首批直接带音爆粒子与音效
+        if (dashFxTicks == 12) {
+            Player p = mc.player;
+            Vec3 look = p.getLookAngle();
+            mc.level.addParticle(ParticleTypes.SONIC_BOOM,
+                    p.getX() + look.x * 0.8D, p.getY() + 1.0D, p.getZ() + look.z * 0.8D,
+                    0.0D, 0.0D, 0.0D);
+            // 用原版爆炸声拉高音调，模拟音爆的短促爆裂感
+            p.playSound(SoundEvents.GENERIC_EXPLODE, 0.55F, 1.9F);
+            p.playSound(SoundEvents.PLAYER_ATTACK_SWEEP, 1.0F, 0.6F);
+        }
+
+        dashFxTicks--;
+        if (dashFxCalls % 3 == 0) {
+            spawnDashShockRings(mc, (12 - dashFxTicks) / 12.0F);
+        }
+        dashFxCalls++;
+    }
+
+    /** 一批 3 个激波环：半径、距离都递增 */
+    private static void spawnDashShockRings(Minecraft mc, float progress) {
+        Player p = mc.player;
+        Vec3 look = p.getLookAngle();
+
+        // 水平前进方向（归一化）
+        double fx = look.x;
+        double fz = look.z;
+        double len = Math.sqrt(fx * fx + fz * fz);
+        if (len < 1.0E-4D) { fx = 0.0D; fz = 1.0D; } else { fx /= len; fz /= len; }
+        // 环平面内的水平轴
+        double rightX = fz;
+        double rightZ = -fx;
+
+        double cx = p.getX();
+        double cy = p.getY() + 1.0D;
+        double cz = p.getZ();
+
+        double[] baseRadius = { 0.45D, 0.85D, 1.30D };
+        double[] baseDist = { 0.55D, 0.95D, 1.40D };
+        float grow = 0.85F + progress * 0.55F; // 由小变大
+
+        for (int k = 0; k < 3; k++) {
+            double r = baseRadius[k] * grow;
+            double dist = baseDist[k] + progress * 0.6D;
+            double ringCx = cx + fx * dist;
+            double ringCz = cz + fz * dist;
+            int n = 20 + k * 6;
+
+            for (int i = 0; i < n; i++) {
+                double a = Math.PI * 2.0D * i / n;
+                double cos = Math.cos(a);
+                double sin = Math.sin(a);
+
+                double px = ringCx + rightX * cos * r;
+                double py = cy + sin * r;
+                double pz = ringCz + rightZ * cos * r;
+
+                // 向外扩张 + 向前推进
+                double vx = rightX * cos * 0.07D + fx * 0.14D;
+                double vy = sin * 0.07D;
+                double vz = rightZ * cos * 0.07D + fz * 0.14D;
+
                 mc.level.addParticle(
-                        ParticleTypes.ELECTRIC_SPARK,
-                        cx + Math.cos(a) * r, cy + 0.05D, cz + Math.sin(a) * r,
-                        0.0D, 0.03D, 0.0D
+                        dust(C_WHITE, C_CYAN, 1.05F + k * 0.15F),
+                        px, py, pz, vx, vy, vz
                 );
             }
         }
-    }
-
-    /**
-     * 每层魂环用的粒子类型（斗罗颜色递进）：
-     * 0 白 → 1 黄（END_ROD 自带暖色） → 2 紫 → 3 黑（CRIT 混 END_ROD 加深） → 4 金红
-     * Minecraft 粒子颜色不可直接指定，只能用不同粒子类型模拟：
-     * 最通用：CRIT（白/中性）+ END_ROD（偏紫蓝）+ ELECTRIC_SPARK（蓝）
-     * 黄色/金色没有直接粒子，靠满蓄力时 END_ROD 自带的颜色多样性来凑
-     */
-    private static ParticleOptions soulRingParticleType(int ring, float progress) {
-        // 魂环等级越高越炫
-        if (progress >= 0.999F) {
-            // 满蓄：前 3 层 END_ROD（彩色），第 4 层混 ELECTRIC_SPARK，第 5 层也混
-            if (ring >= 3 && mcRandom() < 0.25F) return ParticleTypes.ELECTRIC_SPARK;
-            return ParticleTypes.END_ROD;
-        }
-        // 普通蓄力：低环 CRIT，中环 END_ROD，高环 END_ROD 为主
-        if (ring <= 1) {
-            return ParticleTypes.CRIT;
-        } else if (ring <= 3) {
-            if (mcRandom() < 0.35F) return ParticleTypes.CRIT;
-            return ParticleTypes.END_ROD;
-        } else {
-            if (mcRandom() < 0.1F) return ParticleTypes.ELECTRIC_SPARK;
-            return ParticleTypes.END_ROD;
-        }
-    }
-
-    /** 从 Minecraft 全局随机取一个 0~1 的值 */
-    private static float mcRandom() {
-        return Minecraft.getInstance().level != null
-                ? Minecraft.getInstance().level.random.nextFloat()
-                : (float) Math.random();
     }
 
     // ================================================================
@@ -289,56 +418,43 @@ public final class ElbowClientEffects {
     private static void onFullCharge(Minecraft mc) {
         Player p = mc.player;
         Vec3 look = p.getLookAngle();
-        // 背后方向（水平）
         double backX = -look.x;
         double backZ = -look.z;
-        double backLen = Math.sqrt(backX * backX + backZ * backZ);
-        if (backLen < 1.0E-4D) { backX = 0.0D; backZ = -1.0D; } else { backX /= backLen; backZ /= backLen; }
+        double len = Math.sqrt(backX * backX + backZ * backZ);
+        if (len < 1.0E-4D) { backX = 0.0D; backZ = -1.0D; } else { backX /= len; backZ /= len; }
+        double rightX = backZ;
+        double rightZ = -backX;
 
         double cx = p.getX();
         double cy = p.getY() + 1.0D;
         double cz = p.getZ();
+        float phase = rainbowPhase();
 
-        // ---- 背后 2 格处爆一圈竖直光环，向外飞散 ----
-        double bx = cx + backX * 2.0D;
-        double bz = cz + backZ * 2.0D;
-        // 圆盘平面内的水平轴（与背后方向垂直）
-        double rightX = backZ;
-        double rightZ = -backX;
-        for (int i = 0; i < 40; i++) {
-            double a = Math.PI * 2.0D * i / 40.0D;
+        // 背后爆一圈竖直彩虹环
+        double bx = cx + backX * 1.6D;
+        double bz = cz + backZ * 1.6D;
+        for (int i = 0; i < 36; i++) {
+            double a = Math.PI * 2.0D * i / 36.0D;
             double cos = Math.cos(a);
             double sin = Math.sin(a);
-            double ex = bx + rightX * cos * 0.85D;
-            double ey = cy + sin * 0.85D;
-            double ez = bz + rightZ * cos * 0.85D;
-            mc.level.addParticle(ParticleTypes.END_ROD,
-                    ex, ey, ez,
-                    rightX * cos * 0.25D, sin * 0.25D, rightZ * cos * 0.25D);
+            float hue = (float) (a / (Math.PI * 2.0D)) + phase;
+            mc.level.addParticle(
+                    dust(hsv(hue, 0.70F, 1.0F), hsv(hue + 0.15F, 0.90F, 1.0F), 1.35F),
+                    bx + rightX * cos * 0.9D, cy + sin * 0.9D, bz + rightZ * cos * 0.9D,
+                    rightX * cos * 0.22D, sin * 0.22D, rightZ * cos * 0.22D
+            );
         }
-        // 背后一颗音爆（视觉信号）
         mc.level.addParticle(ParticleTypes.SONIC_BOOM, bx, cy, bz, 0.0D, 0.0D, 0.0D);
 
-        // ---- 脚下魂环炸出一道上冲的 ELECTRIC_SPARK 柱 ----
-        for (int i = 0; i < 20; i++) {
+        // 脚下魂环炸出一道上冲的电光柱
+        for (int i = 0; i < 24; i++) {
             double a = mc.level.random.nextDouble() * Math.PI * 2.0D;
-            double r = 0.4D + mc.level.random.nextDouble() * 1.1D;
-            double px = cx + Math.cos(a) * r;
-            double pz = cz + Math.sin(a) * r;
-            mc.level.addParticle(ParticleTypes.ELECTRIC_SPARK,
-                    px, cy - 0.2D, pz,
-                    0.0D, 0.15D + mc.level.random.nextDouble() * 0.1D, 0.0D);
-        }
-
-        // ---- 玩家周身少量电火花（量少，不挡眼，只有近身才看得到）----
-        for (int i = 0; i < 12; i++) {
-            double a = mc.level.random.nextDouble() * Math.PI * 2.0D;
-            double r = 0.5D + mc.level.random.nextDouble() * 0.8D;
-            mc.level.addParticle(ParticleTypes.ELECTRIC_SPARK,
-                    cx + Math.cos(a) * r,
-                    cy + (mc.level.random.nextDouble() - 0.5D) * 0.9D,
-                    cz + Math.sin(a) * r,
-                    0.0D, 0.04D, 0.0D);
+            double r = 0.4D + mc.level.random.nextDouble() * 1.0D;
+            mc.level.addParticle(
+                    dust(C_CYAN, C_WHITE, 1.2F),
+                    cx + Math.cos(a) * r, cy - 0.3D, cz + Math.sin(a) * r,
+                    Math.cos(a) * 0.05D, 0.14D + mc.level.random.nextDouble() * 0.08D, Math.sin(a) * 0.05D
+            );
         }
 
         p.playSound(SoundEvents.NOTE_BLOCK_BELL.value(), 0.9F, 1.4F);

@@ -1,5 +1,6 @@
 package com.example.elbowstrike.client;
 
+import com.example.elbowstrike.ElbowStrikeConfig;
 import com.example.elbowstrike.ElbowStrikeMod;
 import com.example.elbowstrike.network.ActivateThunderPacket;
 import com.example.elbowstrike.network.ElbowStrikePacket;
@@ -61,6 +62,12 @@ public final class ClientEvents {
                     // 按住前进键（W）蓄力释放 → 突进
                     boolean dash = mc.options.keyUp.isDown();
                     NetworkHandler.CHANNEL.sendToServer(new ElbowStrikePacket(chargeTicks, dash));
+                    // 与服务端判定保持一致：只有 2 档及以上（蓄力超过 20%）才会真正突进
+                    int maxTicks = ElbowStrikeConfig.COMMON.chargeMaxTicks.get();
+                    if (dash && ElbowStrikeConfig.COMMON.enableChargeDash.get()
+                            && chargeTicks * 5 >= maxTicks) {
+                        ElbowClientEffects.startDashEffect();
+                    }
                 }
             }
         } else if (event.getButton() == GLFW.GLFW_MOUSE_BUTTON_MIDDLE) {
