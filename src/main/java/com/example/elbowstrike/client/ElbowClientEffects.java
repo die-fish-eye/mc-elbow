@@ -114,8 +114,9 @@ public final class ElbowClientEffects {
             vz += Math.sin(angle) * 0.01D * progress;
             double vy = (mc.level.random.nextDouble() - 0.5D) * 0.02D;
 
-            ParticleTypePick pick = pickBackstarParticle(progress, angle);
-            mc.level.addParticle(pick.type, px, py, pz, vx, vy, vz);
+            // 粒子类型选择在方法内部直接返回 ParticleOptions（ParticleType 本身实现了它）
+            net.minecraft.core.particles.ParticleOptions opts = pickBackstarParticle(progress);
+            mc.level.addParticle(opts, px, py, pz, vx, vy, vz);
         }
 
         // 满蓄力时，在环心（玩家背后很近的位置）额外加一颗电光
@@ -131,30 +132,31 @@ public final class ElbowClientEffects {
     }
 
     /**
-     * 根据蓄力进度选粒子类型，满蓄时在环上混入彩色 END_ROD 制造彩虹环。
+     * 根据蓄力进度选粒子类型。
+     * ParticleType<T> 本身实现了 ParticleOptions，因此可以直接作为返回值传给 addParticle。
      */
-    private static ParticleTypePick pickBackstarParticle(float progress, double angle) {
+    private static net.minecraft.core.particles.ParticleOptions pickBackstarParticle(float progress) {
         if (progress >= 0.999F) {
             // 满蓄：随机混合 END_ROD（彩色感）和 ELECTRIC_SPARK
-            if (Math.floor(angle * 8.0 / (2.0 * Math.PI)) % 3 == 0) {
-                return new ParticleTypePick(ParticleTypes.ELECTRIC_SPARK);
+            if (mcRandom() < 0.25F) {
+                return ParticleTypes.ELECTRIC_SPARK;
             }
-            return new ParticleTypePick(ParticleTypes.END_ROD);
+            return ParticleTypes.END_ROD;
         } else if (progress >= 0.66F) {
             // 中后期：END_ROD 为主，偶尔 ELECTRIC_SPARK
             if (mcRandom() < 0.15F) {
-                return new ParticleTypePick(ParticleTypes.ELECTRIC_SPARK);
+                return ParticleTypes.ELECTRIC_SPARK;
             }
-            return new ParticleTypePick(ParticleTypes.END_ROD);
+            return ParticleTypes.END_ROD;
         } else if (progress >= 0.33F) {
             // 中期：END_ROD + CRIT 混合
             if (mcRandom() < 0.5F) {
-                return new ParticleTypePick(ParticleTypes.END_ROD);
+                return ParticleTypes.END_ROD;
             }
-            return new ParticleTypePick(ParticleTypes.CRIT);
+            return ParticleTypes.CRIT;
         } else {
             // 初期：纯白 CRIT
-            return new ParticleTypePick(ParticleTypes.CRIT);
+            return ParticleTypes.CRIT;
         }
     }
 
@@ -164,9 +166,6 @@ public final class ElbowClientEffects {
                 ? Minecraft.getInstance().level.random.nextFloat()
                 : (float) Math.random();
     }
-
-    /** 只包一层 particle type，让 pickBackstarParticle 的签名一致 */
-    private record ParticleTypePick(net.minecraft.core.particles.ParticleType<?> type) {}
 
     // ================================================================
     // 满蓄力瞬间爆发（一次性）
