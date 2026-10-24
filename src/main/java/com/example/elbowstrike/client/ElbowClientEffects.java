@@ -45,12 +45,13 @@ public final class ElbowClientEffects {
             return;
         }
 
-        float progress = ClientChargeHandler.getChargeProgress();
+        int tier = ClientChargeHandler.getChargeTier();
+        float ratio = tier / (float) ClientChargeHandler.CHARGE_TIERS;
 
         if (ElbowStrikeConfig.COMMON.chargeParticles.get()) {
-            spawnChargeParticles(mc, progress);
+            spawnChargeParticles(mc, ratio);
         }
-        if (progress >= 1.0F && !fullChargeNotified) {
+        if (tier >= ClientChargeHandler.CHARGE_TIERS && !fullChargeNotified) {
             fullChargeNotified = true;
             onFullCharge(mc);
         }

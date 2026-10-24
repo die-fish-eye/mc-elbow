@@ -77,12 +77,22 @@ public final class ElbowStrikeHandler {
         resolveStrike(player, chargeTicks);
     }
 
-    /** 蓄力比例（0 = 瞬发，1 = 满蓄力） */
-    private static float chargeRatioOf(int chargeTicks) {
+    /** 蓄力档位总数（与客户端 {@code ClientChargeHandler.CHARGE_TIERS} 保持一致） */
+    private static final int CHARGE_TIERS = 5;
+
+    /** 蓄力档位（1 ~ {@value #CHARGE_TIERS}）：把客户端连续蓄力 tick 量化到 5 档 */
+    private static int chargeTierOf(int chargeTicks) {
         int max = ElbowStrikeConfig.COMMON.chargeMaxTicks.get();
-        return max > 0
+        float progress = max > 0
                 ? Math.min((float) Math.max(chargeTicks, 0) / max, 1.0F)
                 : 0.0F;
+        int tier = (int) (progress * CHARGE_TIERS) + 1;
+        return Math.max(1, Math.min(tier, CHARGE_TIERS));
+    }
+
+    /** 档位对应的有效蓄力比例：1 档 = 0.0（基础值），5 档 = 1.0（满蓄力） */
+    private static float chargeRatioOf(int chargeTicks) {
+        return (chargeTierOf(chargeTicks) - 1) / (float) (CHARGE_TIERS - 1);
     }
 
     /**

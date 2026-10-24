@@ -11,6 +11,9 @@ import com.example.elbowstrike.ElbowStrikeConfig;
  */
 public final class ClientChargeHandler {
 
+    /** 蓄力档位总数（档位 1 ~ 5，5 = 满蓄力） */
+    public static final int CHARGE_TIERS = 5;
+
     private static boolean charging = false;
     private static long chargeStartMs = 0L;
 
@@ -43,6 +46,21 @@ public final class ClientChargeHandler {
         long elapsedMs = System.currentTimeMillis() - chargeStartMs;
         float maxMs = maxTicks * 50.0F; // 1 tick = 50 ms
         return Math.min(elapsedMs / maxMs, 1.0F);
+    }
+
+    /**
+     * 当前蓄力档位（1 ~ {@value #CHARGE_TIERS}），未蓄力时为 0。
+     * 蓄力值被量化到 5 档，渲染层与伤害计算共用同一套档位。
+     */
+    public static int getChargeTier() {
+        if (!charging) return 0;
+        return tierOf(getChargeProgress());
+    }
+
+    /** 把 0~1 的连续进度映射为 1~5 档 */
+    public static int tierOf(float progress) {
+        int tier = (int) (progress * CHARGE_TIERS) + 1;
+        return Math.max(1, Math.min(tier, CHARGE_TIERS));
     }
 
     /**
