@@ -28,8 +28,6 @@ import net.minecraftforge.fml.common.Mod;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
-import java.io.IOException;
-
 /**
  * 蓄力肘击 + 突进的客户端视觉反馈。
  * <p>
@@ -99,9 +97,11 @@ public final class ElbowClientEffects {
         if (hexagramTexAvailable == null) {
             boolean ok = false;
             try {
-                ok = Minecraft.getInstance().getResourceManager()
-                        .getResource(HEXAGRAM_TEX) != null;
-            } catch (IOException ignored) {
+                ok = !Minecraft.getInstance().getResourceManager()
+                        .listResources("textures/effect",
+                                rl -> rl.getPath().equals("textures/effect/hexagram.png"))
+                        .isEmpty();
+            } catch (RuntimeException ignored) {
                 ok = false;
             }
             hexagramTexAvailable = ok;
