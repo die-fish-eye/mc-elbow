@@ -112,10 +112,10 @@ public final class ElbowStrikeConfig {
             range = b
                     .comment(
                             "肘击判定距离（单位：格）",
-                            "取值范围：1.0 ~ 10.0",
-                            "默认值：3.0"
+                            "取值范围：1.0 ~ 15.0",
+                            "默认值：4.0"
                     )
-                    .defineInRange("range", 3.0D, 1.0D, 10.0D);
+                    .defineInRange("range", 4.0D, 1.0D, 15.0D);
 
             cone = b
                     .comment(
@@ -238,11 +238,11 @@ public final class ElbowStrikeConfig {
                     .comment(
                             "【蓄力延长判定距离】满蓄力时在基础判定距离（general.range）之上额外增加的距离（单位：格）",
                             "0 蓄力 = general.range；满蓄力 = general.range + 此值。",
-                            "参考：0.0 = 蓄力不增加距离；2.0 = 满蓄力多 2 格（默认）；4.0 = 满蓄力够到很远的目标。",
-                            "取值范围：0.0 ~ 10.0",
-                            "默认值：2.0（默认基础 3.0 格 → 满蓄力 5.0 格）"
+                            "参考：0.0 = 蓄力不增加距离；4.5 = 满蓄力多 4.5 格（默认）；7.0 = 几乎能打到远处的敌人。",
+                            "取值范围：0.0 ~ 12.0",
+                            "默认值：4.5（默认基础 4.0 格 → 满蓄力 8.5 格）"
                     )
-                    .defineInRange("chargeRangeBonus", 2.0D, 0.0D, 10.0D);
+                    .defineInRange("chargeRangeBonus", 4.5D, 0.0D, 12.0D);
 
             chargeFullBonusDamage = b
                     .comment(
